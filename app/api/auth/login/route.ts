@@ -14,14 +14,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if user exists in database
+    // Check if user exists in database (simplified query without join)
     const { data: user, error: userError } = await supabaseAdmin
       .from('users')
-      .select('*, employee:employees(*)')
+      .select('*')
       .eq('email', email)
       .single();
 
     if (userError || !user) {
+      console.error('User query error:', userError);
       return NextResponse.json(
         { error: 'Invalid email or password' },
         { status: 401 }
@@ -37,6 +38,13 @@ export async function POST(request: NextRequest) {
         { status: 401 }
       );
     }
+
+    // Fetch employee details separately after password verification
+    const { data: employee } = await supabaseAdmin
+      .from('employees')
+      .select('*')
+      .eq('id', user.employee_id)
+      .single();
 
     // Update last login
     await supabaseAdmin
@@ -69,7 +77,7 @@ export async function POST(request: NextRequest) {
         email: user.email,
         role: user.role,
         isFirstLogin: user.is_first_login,
-        employee: user.employee,
+        employee: employee,
       },
     });
 
