@@ -26,7 +26,7 @@ interface OrgChartModalProps {
 export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }: OrgChartModalProps) {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
-  const [visibleLayers, setVisibleLayers] = useState<Set<string>>(new Set());
+  const [visibleEmployees, setVisibleEmployees] = useState<Set<string>>(new Set());
   const [currentEmployee, setCurrentEmployee] = useState<Employee | null>(null);
 
   useEffect(() => {
@@ -46,7 +46,7 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
         setCurrentEmployee(data.currentEmployee);
 
         // Initially only show current employee
-        setVisibleLayers(new Set([currentEmployeeNumber]));
+        setVisibleEmployees(new Set([currentEmployeeNumber]));
       }
     } catch (error) {
       console.error('Failed to fetch org data:', error);
@@ -55,36 +55,34 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
     }
   };
 
-  const expandUp = (employeeNumber: string) => {
+  const toggleManager = (employeeNumber: string) => {
     const employee = employees.find(e => e.employeeNumber === employeeNumber);
-    if (employee?.reportingManagerEmpNo) {
-      const newVisible = new Set(visibleLayers);
-      newVisible.add(employee.reportingManagerEmpNo);
-      setVisibleLayers(newVisible);
-    }
-  };
+    if (!employee?.reportingManagerEmpNo) return;
 
-  const expandDown = (employeeNumber: string) => {
-    const directReports = getDirectReports(employeeNumber);
-    const newVisible = new Set(visibleLayers);
-    directReports.forEach(report => newVisible.add(report.employeeNumber));
-    setVisibleLayers(newVisible);
-  };
-
-  const collapseUp = (employeeNumber: string) => {
-    const employee = employees.find(e => e.employeeNumber === employeeNumber);
-    if (employee?.reportingManagerEmpNo) {
-      const newVisible = new Set(visibleLayers);
+    const newVisible = new Set(visibleEmployees);
+    if (newVisible.has(employee.reportingManagerEmpNo)) {
       newVisible.delete(employee.reportingManagerEmpNo);
-      setVisibleLayers(newVisible);
+    } else {
+      newVisible.add(employee.reportingManagerEmpNo);
     }
+    setVisibleEmployees(newVisible);
   };
 
-  const collapseDown = (employeeNumber: string) => {
+  const toggleDirectReports = (employeeNumber: string) => {
     const directReports = getDirectReports(employeeNumber);
-    const newVisible = new Set(visibleLayers);
-    directReports.forEach(report => newVisible.delete(report.employeeNumber));
-    setVisibleLayers(newVisible);
+    if (directReports.length === 0) return;
+
+    const newVisible = new Set(visibleEmployees);
+    const allVisible = directReports.every(r => newVisible.has(r.employeeNumber));
+
+    if (allVisible) {
+      // Hide all direct reports
+      directReports.forEach(r => newVisible.delete(r.employeeNumber));
+    } else {
+      // Show all direct reports
+      directReports.forEach(r => newVisible.add(r.employeeNumber));
+    }
+    setVisibleEmployees(newVisible);
   };
 
   const getDirectReports = (managerEmpNo: string) => {
@@ -102,96 +100,90 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
 
   const isManagerVisible = (employeeNumber: string) => {
     const employee = employees.find(e => e.employeeNumber === employeeNumber);
-    return employee?.reportingManagerEmpNo ? visibleLayers.has(employee.reportingManagerEmpNo) : false;
+    return employee?.reportingManagerEmpNo ? visibleEmployees.has(employee.reportingManagerEmpNo) : false;
   };
 
   const areReportsVisible = (employeeNumber: string) => {
     const directReports = getDirectReports(employeeNumber);
-    return directReports.length > 0 && directReports.every(r => visibleLayers.has(r.employeeNumber));
+    return directReports.length > 0 && directReports.every(r => visibleEmployees.has(r.employeeNumber));
   };
 
   const renderEmployeeCard = (employee: Employee, isCurrentUser: boolean = false) => {
     const directReports = getDirectReports(employee.employeeNumber);
     const managerVisible = isManagerVisible(employee.employeeNumber);
     const reportsVisible = areReportsVisible(employee.employeeNumber);
-    const canExpandUp = hasManager(employee.employeeNumber) && !managerVisible;
-    const canCollapseUp = hasManager(employee.employeeNumber) && managerVisible;
-    const canExpandDown = hasReports(employee.employeeNumber) && !reportsVisible;
-    const canCollapseDown = hasReports(employee.employeeNumber) && reportsVisible;
 
     return (
-      <div className="flex flex-col items-center mb-4">
+      <div className="flex flex-col items-center">
         {/* Up Arrow */}
-        {(canExpandUp || canCollapseUp) && (
+        {hasManager(employee.employeeNumber) && (
           <button
-            onClick={() => canExpandUp ? expandUp(employee.employeeNumber) : collapseUp(employee.employeeNumber)}
-            className="mb-2 w-10 h-10 flex items-center justify-center rounded-full bg-indigo-100 hover:bg-indigo-200 transition-colors shadow-md"
-            title={canExpandUp ? "Show manager" : "Hide manager"}
+            onClick={() => toggleManager(employee.employeeNumber)}
+            className="mb-2 w-8 h-8 flex items-center justify-center rounded-full bg-indigo-100 hover:bg-indigo-200 transition-colors shadow-sm"
+            title={managerVisible ? "Hide manager" : "Show manager"}
           >
-            <ChevronUp className="w-5 h-5 text-indigo-600" />
+            <ChevronUp className={`w-4 h-4 ${managerVisible ? 'text-indigo-700' : 'text-indigo-500'}`} />
           </button>
         )}
 
         {/* Employee Card */}
         <div
-          className={`relative rounded-xl shadow-lg transition-all duration-200 border-2 w-full max-w-md ${
+          className={`relative rounded-lg shadow-md transition-all duration-200 border-2 w-64 ${
             isCurrentUser
-              ? 'bg-gradient-to-r from-indigo-50 to-purple-50 border-indigo-400 ring-4 ring-indigo-200'
-              : 'bg-white border-gray-200 hover:border-indigo-300 hover:shadow-xl'
+              ? 'bg-gradient-to-r from-indigo-50 to-purple-50 border-indigo-400 ring-2 ring-indigo-200'
+              : 'bg-white border-gray-200 hover:border-indigo-300 hover:shadow-lg'
           }`}
         >
-          <div className="p-5">
+          <div className="p-3">
             {/* Header */}
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-lg font-bold text-gray-900 flex-1 truncate">{employee.name}</h3>
+            <div className="flex items-start justify-between mb-2">
+              <h3 className="text-sm font-bold text-gray-900 flex-1 truncate leading-tight">{employee.name}</h3>
               {isCurrentUser && (
-                <span className="ml-2 px-3 py-1 bg-indigo-600 text-white text-xs font-semibold rounded-full">
+                <span className="ml-1 px-2 py-0.5 bg-indigo-600 text-white text-[10px] font-semibold rounded-full">
                   YOU
                 </span>
               )}
             </div>
 
             {/* Details */}
-            <div className="space-y-3 text-sm">
+            <div className="space-y-1.5 text-xs">
               <div className="flex items-start">
-                <Building2 className="w-4 h-4 mr-2 text-gray-400 flex-shrink-0 mt-0.5" />
-                <div>
-                  <div className="font-medium text-gray-900">{employee.designation}</div>
-                  <div className="text-xs text-gray-500">{employee.businessUnit} • {employee.location}</div>
+                <Building2 className="w-3 h-3 mr-1.5 text-gray-400 flex-shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-gray-900 truncate">{employee.designation}</div>
+                  <div className="text-[10px] text-gray-500 truncate">{employee.businessUnit}</div>
                 </div>
               </div>
 
               <div className="flex items-center">
-                <TrendingUp className="w-4 h-4 mr-2 text-green-500 flex-shrink-0" />
+                <TrendingUp className="w-3 h-3 mr-1.5 text-green-500 flex-shrink-0" />
                 <span className="font-semibold text-gray-900">₹{employee.ytdPerformance} Cr</span>
                 <span className="ml-1 text-gray-500">YTD</span>
               </div>
 
-              <div className="flex items-center space-x-4 pt-2 border-t border-gray-200">
-                <a
-                  href={`tel:${employee.mobile}`}
-                  className="flex items-center text-blue-600 hover:text-blue-800 transition-colors flex-1 truncate"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <Phone className="w-4 h-4 mr-1 flex-shrink-0" />
-                  <span className="truncate text-sm">{employee.mobile || 'N/A'}</span>
-                </a>
-              </div>
+              <a
+                href={`tel:${employee.mobile}`}
+                className="flex items-center text-blue-600 hover:text-blue-800 transition-colors truncate"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Phone className="w-3 h-3 mr-1.5 flex-shrink-0" />
+                <span className="truncate">{employee.mobile || 'N/A'}</span>
+              </a>
 
               <a
                 href={`mailto:${employee.email}`}
                 className="flex items-center text-blue-600 hover:text-blue-800 transition-colors truncate"
                 onClick={(e) => e.stopPropagation()}
               >
-                <Mail className="w-4 h-4 mr-1 flex-shrink-0" />
-                <span className="truncate text-sm">{employee.email}</span>
+                <Mail className="w-3 h-3 mr-1.5 flex-shrink-0" />
+                <span className="truncate">{employee.email}</span>
               </a>
 
               {/* Team Size */}
               {directReports.length > 0 && (
-                <div className="flex items-center text-sm text-gray-600 pt-2 border-t border-gray-200">
-                  <Users className="w-4 h-4 mr-1 text-gray-400" />
-                  <span className="font-medium">{directReports.length} Direct Report{directReports.length !== 1 ? 's' : ''}</span>
+                <div className="flex items-center text-[10px] text-gray-600 pt-1.5 border-t border-gray-200">
+                  <Users className="w-3 h-3 mr-1 text-gray-400" />
+                  <span className="font-medium">{directReports.length} Report{directReports.length !== 1 ? 's' : ''}</span>
                 </div>
               )}
             </div>
@@ -199,64 +191,75 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
         </div>
 
         {/* Down Arrow */}
-        {(canExpandDown || canCollapseDown) && (
+        {hasReports(employee.employeeNumber) && (
           <button
-            onClick={() => canExpandDown ? expandDown(employee.employeeNumber) : collapseDown(employee.employeeNumber)}
-            className="mt-2 w-10 h-10 flex items-center justify-center rounded-full bg-indigo-100 hover:bg-indigo-200 transition-colors shadow-md"
-            title={canExpandDown ? "Show team" : "Hide team"}
+            onClick={() => toggleDirectReports(employee.employeeNumber)}
+            className="mt-2 w-8 h-8 flex items-center justify-center rounded-full bg-indigo-100 hover:bg-indigo-200 transition-colors shadow-sm"
+            title={reportsVisible ? "Hide team" : "Show team"}
           >
-            <ChevronDown className="w-5 h-5 text-indigo-600" />
+            <ChevronDown className={`w-4 h-4 ${reportsVisible ? 'text-indigo-700' : 'text-indigo-500'}`} />
           </button>
         )}
       </div>
     );
   };
 
-  const renderVisibleEmployees = () => {
+  const renderHierarchy = () => {
     if (!currentEmployee) return null;
 
-    // Get all visible employees and organize them by layer
-    const visibleEmployees = employees.filter(e => visibleLayers.has(e.employeeNumber));
-
-    // Build hierarchy layers
-    const layers: Employee[][] = [];
+    // Build visible hierarchy tree
+    const layers: { employees: Employee[]; level: number }[] = [];
     const processed = new Set<string>();
 
-    // Find the top-most visible employee
-    let topEmployee = visibleEmployees.find(e =>
-      !e.reportingManagerEmpNo || !visibleLayers.has(e.reportingManagerEmpNo)
+    // Find all visible employees and their relationships
+    const visibleEmpList = employees.filter(e => visibleEmployees.has(e.employeeNumber));
+
+    // Find the topmost visible employee
+    let topEmployee = visibleEmpList.find(e =>
+      !e.reportingManagerEmpNo || !visibleEmployees.has(e.reportingManagerEmpNo)
     );
 
     if (!topEmployee) {
       topEmployee = currentEmployee;
     }
 
-    // Build layers from top down
-    const buildLayers = (employee: Employee, layerIndex: number) => {
+    // Build layers recursively
+    const buildLayers = (employee: Employee, level: number) => {
       if (processed.has(employee.employeeNumber)) return;
 
-      if (!layers[layerIndex]) layers[layerIndex] = [];
-      layers[layerIndex].push(employee);
+      if (!layers[level]) {
+        layers[level] = { employees: [], level };
+      }
+
+      layers[level].employees.push(employee);
       processed.add(employee.employeeNumber);
 
-      // Add visible children to next layer
-      const children = getDirectReports(employee.employeeNumber)
-        .filter(child => visibleLayers.has(child.employeeNumber));
+      // Get visible direct reports
+      const directReports = getDirectReports(employee.employeeNumber)
+        .filter(r => visibleEmployees.has(r.employeeNumber));
 
-      children.forEach(child => buildLayers(child, layerIndex + 1));
+      directReports.forEach(report => buildLayers(report, level + 1));
     };
 
     buildLayers(topEmployee, 0);
 
     return (
-      <div className="space-y-6">
-        {layers.map((layer, layerIndex) => (
-          <div key={layerIndex} className="space-y-4">
-            {layer.map(employee => (
-              <div key={employee.employeeNumber}>
-                {renderEmployeeCard(employee, employee.employeeNumber === currentEmployeeNumber)}
-              </div>
-            ))}
+      <div className="flex flex-col items-center space-y-8">
+        {layers.map((layer, idx) => (
+          <div key={idx} className="flex flex-col items-center">
+            {/* Employees in this layer */}
+            <div className="flex items-start justify-center gap-6 flex-wrap max-w-full">
+              {layer.employees.map(emp => (
+                <div key={emp.employeeNumber}>
+                  {renderEmployeeCard(emp, emp.employeeNumber === currentEmployeeNumber)}
+                </div>
+              ))}
+            </div>
+
+            {/* Connection line to next layer */}
+            {idx < layers.length - 1 && layers[idx + 1].employees.length > 0 && (
+              <div className="w-0.5 h-6 bg-gray-300 my-2"></div>
+            )}
           </div>
         ))}
       </div>
@@ -275,13 +278,13 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
 
       {/* Modal */}
       <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div className="relative bg-white rounded-2xl shadow-2xl w-full h-full max-w-[95vw] max-h-[95vh] flex flex-col">
           {/* Header */}
           <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-4 rounded-t-2xl flex items-center justify-between flex-shrink-0">
             <div>
               <h2 className="text-2xl font-bold text-white">Organization View</h2>
               <p className="text-indigo-100 text-sm mt-1">
-                Use ↑ ↓ arrows to navigate hierarchy
+                Click ↑ to show manager • Click ↓ to show team
               </p>
             </div>
             <button
@@ -292,8 +295,8 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
             </button>
           </div>
 
-          {/* Content - Single Column, Centered */}
-          <div className="flex-1 overflow-y-auto p-6">
+          {/* Content - Scrollable Hierarchy */}
+          <div className="flex-1 overflow-auto p-8">
             {loading ? (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center">
@@ -310,8 +313,8 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
                 </div>
               </div>
             ) : (
-              <div className="max-w-md mx-auto">
-                {renderVisibleEmployees()}
+              <div className="min-h-full flex items-center justify-center">
+                {renderHierarchy()}
               </div>
             )}
           </div>
