@@ -134,6 +134,11 @@ export default function DashboardPage() {
     }).format(num);
   };
 
+  const formatCrore = (value: string | number) => {
+    const num = typeof value === 'string' ? parseFloat(value) : value;
+    return `₹${num.toFixed(2)} Cr`;
+  };
+
   const tabs = [
     { id: 'B2B' as TabType, name: 'B2B', icon: Building2, description: 'Business to Business' },
     { id: 'B2C' as TabType, name: 'B2C', icon: Users, description: 'Digital Advisory' },
@@ -200,25 +205,25 @@ export default function DashboardPage() {
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
                       <p className="text-xs text-white/70 mb-1">MF+SIF+MSCI</p>
-                      <p className="text-2xl font-bold">{formatCurrency(myPerformance.mtd?.mfSifMsci || 0)}</p>
+                      <p className="text-2xl font-bold">{formatCrore(myPerformance.mtd?.mfSifMsci || 0)}</p>
                     </div>
                     <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
                       <p className="text-xs text-white/70 mb-1">COB (100%)</p>
-                      <p className="text-2xl font-bold">{formatCurrency(myPerformance.mtd?.cob100 || 0)}</p>
+                      <p className="text-2xl font-bold">{formatCrore(myPerformance.mtd?.cob100 || 0)}</p>
                     </div>
                     <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
                       <p className="text-xs text-white/70 mb-1">AIF+PMS+LAS+DYNAMO</p>
-                      <p className="text-2xl font-bold">{formatCurrency(myPerformance.mtd?.aifPmsLasDynamo || 0)}</p>
+                      <p className="text-2xl font-bold">{formatCrore(myPerformance.mtd?.aifPmsLasDynamo || 0)}</p>
                     </div>
                     <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
                       <p className="text-xs text-white/70 mb-1">ALTERNATE</p>
-                      <p className="text-2xl font-bold">{formatCurrency(myPerformance.mtd?.alternate || 0)}</p>
+                      <p className="text-2xl font-bold">{formatCrore(myPerformance.mtd?.alternate || 0)}</p>
                     </div>
                   </div>
                   <div className="mt-4 bg-white/20 backdrop-blur-sm rounded-xl p-4 border border-white/30">
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-semibold text-white/90">Total MTD</span>
-                      <span className="text-3xl font-bold">{formatCurrency(myPerformance.mtd?.total || 0)}</span>
+                      <span className="text-3xl font-bold">{formatCrore(myPerformance.mtd?.total || 0)}</span>
                     </div>
                   </div>
                 </div>
@@ -229,25 +234,25 @@ export default function DashboardPage() {
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
                       <p className="text-xs text-white/70 mb-1">MF+SIF+MSCI</p>
-                      <p className="text-2xl font-bold">{formatCurrency(myPerformance.ytdTotal?.mfSifMsci || 0)}</p>
+                      <p className="text-2xl font-bold">{formatCrore(myPerformance.ytdTotal?.mfSifMsci || 0)}</p>
                     </div>
                     <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
                       <p className="text-xs text-white/70 mb-1">COB (100%)</p>
-                      <p className="text-2xl font-bold">{formatCurrency(myPerformance.ytdTotal?.cob100 || 0)}</p>
+                      <p className="text-2xl font-bold">{formatCrore(myPerformance.ytdTotal?.cob100 || 0)}</p>
                     </div>
                     <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
                       <p className="text-xs text-white/70 mb-1">AIF+PMS+LAS+DYNAMO</p>
-                      <p className="text-2xl font-bold">{formatCurrency(myPerformance.ytdTotal?.aifPmsLasDynamo || 0)}</p>
+                      <p className="text-2xl font-bold">{formatCrore(myPerformance.ytdTotal?.aifPmsLasDynamo || 0)}</p>
                     </div>
                     <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
                       <p className="text-xs text-white/70 mb-1">ALTERNATE</p>
-                      <p className="text-2xl font-bold">{formatCurrency(myPerformance.ytdTotal?.alternate || 0)}</p>
+                      <p className="text-2xl font-bold">{formatCrore(myPerformance.ytdTotal?.alternate || 0)}</p>
                     </div>
                   </div>
                   <div className="mt-4 bg-white/20 backdrop-blur-sm rounded-xl p-4 border border-white/30">
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-semibold text-white/90">Total YTD</span>
-                      <span className="text-3xl font-bold">{formatCurrency(myPerformance.ytdTotal?.total || 0)}</span>
+                      <span className="text-3xl font-bold">{formatCrore(myPerformance.ytdTotal?.total || 0)}</span>
                     </div>
                   </div>
                 </div>
