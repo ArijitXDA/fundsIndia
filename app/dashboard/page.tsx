@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { TrendingUp, Award, Target, BarChart3, Trophy, Medal, Crown } from 'lucide-react';
+import { TrendingUp, Award, Target, BarChart3, Trophy, Medal, Crown, Building2, Users } from 'lucide-react';
 
 interface EmployeeSales {
   employeeId: string;
@@ -23,12 +23,15 @@ interface TopPerformer {
   ytdSales: string;
 }
 
+type TabType = 'B2B' | 'B2C';
+
 export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [salesData, setSalesData] = useState<any>(null);
   const [myPerformance, setMyPerformance] = useState<EmployeeSales | null>(null);
+  const [activeTab, setActiveTab] = useState<TabType>('B2B');
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -40,6 +43,11 @@ export default function DashboardPage() {
         }
         const data = await response.json();
         setUser(data.user);
+
+        // Set default tab based on user's business unit
+        if (data.user.employee?.business_unit === 'B2C') {
+          setActiveTab('B2C');
+        }
 
         // Fetch sales data
         const salesResponse = await fetch('/api/sales-summary');
@@ -95,6 +103,11 @@ export default function DashboardPage() {
       maximumFractionDigits: 2,
     }).format(num);
   };
+
+  const tabs = [
+    { id: 'B2B' as TabType, name: 'B2B', icon: Building2, description: 'Business to Business' },
+    { id: 'B2C' as TabType, name: 'B2C', icon: Users, description: 'Digital Advisory' },
+  ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
@@ -181,84 +194,162 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Leaderboard Section */}
+        {/* Tabs Section */}
         <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
-          <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-8 py-6">
-            <div className="flex items-center space-x-3">
-              <Trophy className="w-8 h-8 text-yellow-300" />
-              <h2 className="text-2xl font-bold text-white">Top 10 Performers</h2>
-            </div>
-            <p className="text-indigo-100 mt-1">Based on YTD Sales (COB 100%)</p>
-          </div>
-
-          <div className="p-8">
-            {salesData?.top10Performers && salesData.top10Performers.length > 0 ? (
-              <div className="space-y-4">
-                {salesData.top10Performers.map((performer: TopPerformer, index: number) => (
-                  <div
-                    key={performer.employeeId}
-                    className={`flex items-center justify-between p-5 rounded-xl transition-all duration-200 hover:shadow-md ${
-                      index < 3
-                        ? 'bg-gradient-to-r from-yellow-50 to-amber-50 border-2 border-yellow-200'
-                        : 'bg-gray-50 border border-gray-200 hover:border-indigo-300'
+          {/* Tab Navigation */}
+          <div className="bg-gradient-to-r from-gray-50 to-gray-100 border-b border-gray-200">
+            <div className="flex space-x-1 px-6 pt-6">
+              {tabs.map((tab) => {
+                const Icon = tab.icon;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex items-center space-x-2 px-6 py-4 rounded-t-xl font-semibold transition-all duration-200 ${
+                      activeTab === tab.id
+                        ? 'bg-white text-indigo-600 shadow-md border-t-4 border-indigo-600'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
                     }`}
                   >
-                    <div className="flex items-center space-x-6 flex-1">
-                      <div className="flex items-center justify-center w-12 h-12 rounded-full bg-white shadow-md">
-                        {getRankIcon(performer.rank)}
-                      </div>
-
-                      <div className="flex-1">
-                        <h3 className="text-lg font-bold text-gray-900">{performer.name}</h3>
-                        <p className="text-sm text-gray-600">
-                          {performer.employeeId} • {performer.branch} • {performer.zone}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center space-x-8 text-right">
-                      <div>
-                        <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">MTD Sales</p>
-                        <p className="text-lg font-bold text-indigo-600">{formatCurrency(performer.mtdSales)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">YTD Sales</p>
-                        <p className="text-2xl font-bold text-purple-600">{formatCurrency(performer.ytdSales)}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-12">
-                <Trophy className="w-20 h-20 text-gray-300 mx-auto mb-4" />
-                <p className="text-xl font-semibold text-gray-600 mb-2">No Leaderboard Data</p>
-                <p className="text-gray-500">Top performers will appear here once sales data is available</p>
-              </div>
-            )}
+                    <Icon className="w-5 h-5" />
+                    <span>{tab.name}</span>
+                    <span className={`text-xs px-2 py-1 rounded-full ${
+                      activeTab === tab.id
+                        ? 'bg-indigo-100 text-indigo-700'
+                        : 'bg-gray-200 text-gray-600'
+                    }`}>
+                      {tab.description}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {/* Summary Stats */}
-          {salesData?.summary && (
-            <div className="bg-gray-50 px-8 py-6 border-t border-gray-200">
-              <div className="grid grid-cols-4 gap-6">
-                <div className="text-center">
-                  <p className="text-sm text-gray-600 mb-1">Total Employees</p>
-                  <p className="text-2xl font-bold text-gray-900">{salesData.summary.totalEmployees}</p>
+          {/* Tab Content */}
+          {activeTab === 'B2B' && (
+            <div>
+              <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-8 py-6">
+                <div className="flex items-center space-x-3">
+                  <Trophy className="w-8 h-8 text-yellow-300" />
+                  <h2 className="text-2xl font-bold text-white">Top 10 B2B Performers</h2>
                 </div>
-                <div className="text-center">
-                  <p className="text-sm text-gray-600 mb-1">Total MTD Sales</p>
-                  <p className="text-2xl font-bold text-indigo-600">{formatCurrency(salesData.summary.totalMTDSales)}</p>
+                <p className="text-indigo-100 mt-1">Based on YTD Sales (COB 100%)</p>
+              </div>
+
+              <div className="p-8">
+                {salesData?.top10Performers && salesData.top10Performers.length > 0 ? (
+                  <div className="space-y-4">
+                    {salesData.top10Performers.map((performer: TopPerformer, index: number) => (
+                      <div
+                        key={performer.employeeId}
+                        className={`flex items-center justify-between p-5 rounded-xl transition-all duration-200 hover:shadow-md ${
+                          index < 3
+                            ? 'bg-gradient-to-r from-yellow-50 to-amber-50 border-2 border-yellow-200'
+                            : 'bg-gray-50 border border-gray-200 hover:border-indigo-300'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-6 flex-1">
+                          <div className="flex items-center justify-center w-12 h-12 rounded-full bg-white shadow-md">
+                            {getRankIcon(performer.rank)}
+                          </div>
+
+                          <div className="flex-1">
+                            <h3 className="text-lg font-bold text-gray-900">{performer.name}</h3>
+                            <p className="text-sm text-gray-600">
+                              {performer.employeeId} • {performer.branch} • {performer.zone}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center space-x-8 text-right">
+                          <div>
+                            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">MTD Sales</p>
+                            <p className="text-lg font-bold text-indigo-600">{formatCurrency(performer.mtdSales)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">YTD Sales</p>
+                            <p className="text-2xl font-bold text-purple-600">{formatCurrency(performer.ytdSales)}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-12">
+                    <Trophy className="w-20 h-20 text-gray-300 mx-auto mb-4" />
+                    <p className="text-xl font-semibold text-gray-600 mb-2">No B2B Leaderboard Data</p>
+                    <p className="text-gray-500">Top B2B performers will appear here once sales data is available</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Summary Stats for B2B */}
+              {salesData?.summary && (
+                <div className="bg-gray-50 px-8 py-6 border-t border-gray-200">
+                  <div className="grid grid-cols-4 gap-6">
+                    <div className="text-center">
+                      <p className="text-sm text-gray-600 mb-1">Total B2B RMs</p>
+                      <p className="text-2xl font-bold text-gray-900">{salesData.summary.totalEmployees}</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm text-gray-600 mb-1">Total MTD Sales</p>
+                      <p className="text-2xl font-bold text-indigo-600">{formatCurrency(salesData.summary.totalMTDSales)}</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm text-gray-600 mb-1">Total YTD Sales</p>
+                      <p className="text-2xl font-bold text-purple-600">{formatCurrency(salesData.summary.totalYTDSales)}</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm text-gray-600 mb-1">ARN Partners</p>
+                      <p className="text-2xl font-bold text-gray-900">
+                        {(salesData.summary.recordsCurrentMonth || 0) + (salesData.summary.recordsYTD || 0)}
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <div className="text-center">
-                  <p className="text-sm text-gray-600 mb-1">Total YTD Sales</p>
-                  <p className="text-2xl font-bold text-purple-600">{formatCurrency(salesData.summary.totalYTDSales)}</p>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'B2C' && (
+            <div>
+              <div className="bg-gradient-to-r from-blue-600 to-cyan-600 px-8 py-6">
+                <div className="flex items-center space-x-3">
+                  <Trophy className="w-8 h-8 text-yellow-300" />
+                  <h2 className="text-2xl font-bold text-white">Top 10 B2C Advisors</h2>
                 </div>
-                <div className="text-center">
-                  <p className="text-sm text-gray-600 mb-1">Data Points</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {(salesData.summary.recordsCurrentMonth || 0) + (salesData.summary.recordsYTD || 0)}
+                <p className="text-blue-100 mt-1">Based on Advisory Performance Metrics</p>
+              </div>
+
+              <div className="p-8">
+                <div className="text-center py-16">
+                  <Users className="w-24 h-24 text-blue-200 mx-auto mb-6" />
+                  <p className="text-2xl font-bold text-gray-700 mb-3">B2C Advisory Data Coming Soon</p>
+                  <p className="text-gray-500 max-w-md mx-auto">
+                    Import the Advisory MIS data to see B2C advisor rankings and performance metrics
                   </p>
+                  <div className="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-6 max-w-lg mx-auto text-left">
+                    <h4 className="font-semibold text-blue-900 mb-3">📊 B2C Metrics Will Include:</h4>
+                    <ul className="text-sm text-blue-800 space-y-2">
+                      <li className="flex items-start">
+                        <span className="mr-2">•</span>
+                        <span>Net Inflow (MTD & YTD)</span>
+                      </li>
+                      <li className="flex items-start">
+                        <span className="mr-2">•</span>
+                        <span>Current AUM (Mark-to-Market)</span>
+                      </li>
+                      <li className="flex items-start">
+                        <span className="mr-2">•</span>
+                        <span>SIP Book & New SIP Additions</span>
+                      </li>
+                      <li className="flex items-start">
+                        <span className="mr-2">•</span>
+                        <span>Assigned Leads & Conversion</span>
+                      </li>
+                    </ul>
+                  </div>
                 </div>
               </div>
             </div>
