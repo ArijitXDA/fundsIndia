@@ -147,11 +147,33 @@ export async function GET(request: Request) {
       ? enrichedWithTeamYTD?.find(e => e.employeeNumber === employeeId)
       : null;
 
+    // Debug info for W2225A
+    const debugInfo = employeeId === 'W2225A' ? {
+      requestedEmployeeId: employeeId,
+      totalRawEmployees: employees?.length || 0,
+      totalEnrichedEmployees: enrichedWithTeamYTD?.length || 0,
+      rawEmployeeExists: employees?.some(e => e.employee_number === 'W2225A'),
+      enrichedEmployeeExists: enrichedWithTeamYTD?.some(e => e.employeeNumber === 'W2225A'),
+      currentEmployeeFound: !!currentEmployee,
+      currentEmployeeData: currentEmployee,
+      // Check for similar employee numbers
+      similarEmployeeNumbers: employees?.filter(e =>
+        e.employee_number?.toLowerCase().includes('w2225') ||
+        e.employee_number?.toLowerCase().includes('2225a')
+      ).map(e => ({ empNo: e.employee_number, name: e.full_name })),
+      // Check for Akshay by name
+      akshayEmployees: employees?.filter(e =>
+        e.full_name?.toLowerCase().includes('akshay') &&
+        e.full_name?.toLowerCase().includes('sapru')
+      ).map(e => ({ empNo: e.employee_number, name: e.full_name, manager: e.reporting_manager_emp_number })),
+    } : undefined;
+
     return NextResponse.json({
       success: true,
       employees: enrichedWithTeamYTD,
       currentEmployee,
       totalEmployees: enrichedWithTeamYTD?.length || 0,
+      ...(debugInfo && { debug: debugInfo }),
     });
   } catch (error: any) {
     return NextResponse.json({

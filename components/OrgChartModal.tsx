@@ -47,7 +47,7 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
         const allEmployees = data.employees;
 
         // If currentEmployee exists in data, use it; otherwise find by employee number
-        const current = data.currentEmployee || allEmployees.find(e => e.employeeNumber === currentEmployeeNumber);
+        const current = data.currentEmployee || allEmployees.find((e: Employee) => e.employeeNumber === currentEmployeeNumber);
 
         if (current) {
           const downstreamEmployees = getDownstreamEmployees(allEmployees, current.employeeNumber);
@@ -56,6 +56,18 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
           setVisibleEmployees(new Set([current.employeeNumber]));
         } else {
           console.error('Current employee not found:', currentEmployeeNumber);
+          console.error('Total employees in system:', allEmployees?.length);
+          console.error('Looking for employee number:', currentEmployeeNumber);
+
+          // Try to find similar employee numbers for debugging
+          if (currentEmployeeNumber) {
+            const similar = allEmployees?.filter((e: Employee) =>
+              e.employeeNumber?.toLowerCase().includes(currentEmployeeNumber.toLowerCase()) ||
+              currentEmployeeNumber.toLowerCase().includes(e.employeeNumber?.toLowerCase())
+            );
+            console.error('Similar employee numbers found:', similar);
+          }
+
           setEmployees([]);
           setCurrentEmployee(null);
         }
@@ -76,13 +88,13 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
       if (visited.has(empNo)) return;
       visited.add(empNo);
 
-      const employee = allEmployees.find(e => e.employeeNumber === empNo);
+      const employee = allEmployees.find((e: Employee) => e.employeeNumber === empNo);
       if (employee) {
         downstream.push(employee);
 
         // Get all direct reports
-        const reports = allEmployees.filter(e => e.reportingManagerEmpNo === empNo);
-        reports.forEach(report => collectDownstream(report.employeeNumber));
+        const reports = allEmployees.filter((e: Employee) => e.reportingManagerEmpNo === empNo);
+        reports.forEach((report: Employee) => collectDownstream(report.employeeNumber));
       }
     };
 
@@ -105,16 +117,16 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
 
     if (allVisible) {
       // Hide all direct reports
-      directReports.forEach(r => newVisible.delete(r.employeeNumber));
+      directReports.forEach((r: Employee) => newVisible.delete(r.employeeNumber));
     } else {
       // Show all direct reports
-      directReports.forEach(r => newVisible.add(r.employeeNumber));
+      directReports.forEach((r: Employee) => newVisible.add(r.employeeNumber));
     }
     setVisibleEmployees(newVisible);
   };
 
   const getDirectReports = (managerEmpNo: string) => {
-    return employees.filter(emp => emp.reportingManagerEmpNo === managerEmpNo);
+    return employees.filter((emp: Employee) => emp.reportingManagerEmpNo === managerEmpNo);
   };
 
   const hasManager = (employeeNumber: string) => {
@@ -127,7 +139,7 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
   };
 
   const isManagerVisible = (employeeNumber: string) => {
-    const employee = employees.find(e => e.employeeNumber === employeeNumber);
+    const employee = employees.find((e: Employee) => e.employeeNumber === employeeNumber);
     return employee?.reportingManagerEmpNo ? visibleEmployees.has(employee.reportingManagerEmpNo) : false;
   };
 
@@ -255,10 +267,10 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
     const processed = new Set<string>();
 
     // Find all visible employees and their relationships
-    const visibleEmpList = employees.filter(e => visibleEmployees.has(e.employeeNumber));
+    const visibleEmpList = employees.filter((e: Employee) => visibleEmployees.has(e.employeeNumber));
 
     // Find the topmost visible employee
-    let topEmployee = visibleEmpList.find(e =>
+    let topEmployee = visibleEmpList.find((e: Employee) =>
       !e.reportingManagerEmpNo || !visibleEmployees.has(e.reportingManagerEmpNo)
     );
 
@@ -279,9 +291,9 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
 
       // Get visible direct reports
       const directReports = getDirectReports(employee.employeeNumber)
-        .filter(r => visibleEmployees.has(r.employeeNumber));
+        .filter((r: Employee) => visibleEmployees.has(r.employeeNumber));
 
-      directReports.forEach(report => buildLayers(report, level + 1));
+      directReports.forEach((report: Employee) => buildLayers(report, level + 1));
     };
 
     buildLayers(topEmployee, 0);
@@ -292,7 +304,7 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
           <div key={idx} className="flex flex-col items-center">
             {/* Employees in this layer */}
             <div className="flex items-start justify-center gap-6 flex-wrap max-w-full">
-              {layer.employees.map(emp => (
+              {layer.employees.map((emp: Employee) => (
                 <div key={emp.employeeNumber}>
                   {renderEmployeeCard(emp, emp.employeeNumber === currentEmployeeNumber)}
                 </div>
@@ -349,10 +361,22 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
               </div>
             ) : employees.length === 0 ? (
               <div className="flex items-center justify-center h-full">
-                <div className="text-center">
+                <div className="text-center max-w-md">
                   <Users className="w-20 h-20 text-gray-300 mx-auto mb-4" />
                   <p className="text-xl font-semibold text-gray-600 mb-2">No Organization Data</p>
-                  <p className="text-gray-500">Unable to load organizational structure</p>
+                  <p className="text-gray-500 mb-4">
+                    {currentEmployeeNumber
+                      ? `Unable to find employee record for: ${currentEmployeeNumber}`
+                      : 'Employee number not found in your profile'}
+                  </p>
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-left">
+                    <p className="font-semibold text-yellow-800 mb-2">Possible Reasons:</p>
+                    <ul className="text-yellow-700 space-y-1 list-disc list-inside">
+                      <li>Your employee record may not be synced in the system</li>
+                      <li>Your employee number may be incorrect in the users table</li>
+                      <li>Please contact IT support for assistance</li>
+                    </ul>
+                  </div>
                 </div>
               </div>
             ) : (
