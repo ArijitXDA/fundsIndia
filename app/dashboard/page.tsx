@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { TrendingUp, Award, Target, BarChart3, Trophy, Medal, Crown, Building2, Users } from 'lucide-react';
+import { TrendingUp, Award, Target, BarChart3, Trophy, Medal, Crown, Building2, Users, Network } from 'lucide-react';
+import OrgChartModal from '@/components/OrgChartModal';
 
 interface EmployeeSales {
   employeeId: string;
@@ -45,6 +46,7 @@ export default function DashboardPage() {
   const [b2cData, setB2cData] = useState<any>(null);
   const [myPerformance, setMyPerformance] = useState<EmployeeSales | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('B2B');
+  const [isOrgChartOpen, setIsOrgChartOpen] = useState(false);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -146,11 +148,18 @@ export default function DashboardPage() {
                 <p className="text-sm text-gray-500">Sales Contest & Performance Tracking</p>
               </div>
             </div>
-            <div className="flex items-center space-x-6">
+            <div className="flex items-center space-x-4">
               <div className="text-right">
                 <p className="text-sm font-semibold text-gray-900">{user?.employee?.full_name}</p>
                 <p className="text-xs text-gray-500">{user?.employee?.employee_number} • {user?.role?.toUpperCase()}</p>
               </div>
+              <button
+                onClick={() => setIsOrgChartOpen(true)}
+                className="px-4 py-2.5 text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-all duration-200 flex items-center space-x-2 border border-indigo-200"
+              >
+                <Network className="w-4 h-4" />
+                <span>Org View</span>
+              </button>
               <button
                 onClick={handleLogout}
                 className="px-5 py-2.5 text-sm font-medium text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 rounded-lg shadow-md transition-all duration-200"
@@ -420,6 +429,13 @@ export default function DashboardPage() {
           )}
         </div>
       </main>
+
+      {/* Org Chart Modal */}
+      <OrgChartModal
+        isOpen={isOrgChartOpen}
+        onClose={() => setIsOrgChartOpen(false)}
+        currentEmployeeNumber={user?.employee?.employee_number || ''}
+      />
     </div>
   );
 }
