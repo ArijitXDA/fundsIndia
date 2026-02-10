@@ -5,13 +5,21 @@ import { useRouter } from 'next/navigation';
 import { TrendingUp, Award, Target, BarChart3, Trophy, Medal, Crown, Building2, Users, Network } from 'lucide-react';
 import OrgChartModal from '@/components/OrgChartModal';
 
+interface SalesBreakdown {
+  mfSifMsci: number;
+  cob100: number;
+  aifPmsLasDynamo: number;
+  alternate: number;
+  total: number;
+}
+
 interface EmployeeSales {
   employeeId: string;
   employeeName: string;
   branch: string;
   zone: string;
-  mtd: number;
-  ytdTotal: number;
+  mtd: SalesBreakdown;
+  ytdTotal: SalesBreakdown;
 }
 
 interface TopPerformer {
