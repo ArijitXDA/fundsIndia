@@ -5,9 +5,11 @@ import bcrypt from 'bcryptjs';
 export async function POST(request: NextRequest) {
   try {
     const { email, password } = await request.json();
+    console.log('[LOGIN] Attempt for email:', email);
 
     // Validate email domain
     if (!email.endsWith('@fundsindia.com')) {
+      console.log('[LOGIN] Invalid domain:', email);
       return NextResponse.json(
         { error: 'Only @fundsindia.com email addresses are allowed' },
         { status: 400 }
@@ -22,22 +24,28 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (userError || !user) {
-      console.error('User query error:', userError);
+      console.error('[LOGIN] User not found:', email, userError);
       return NextResponse.json(
         { error: 'Invalid email or password' },
         { status: 401 }
       );
     }
+
+    console.log('[LOGIN] User found:', email, 'Role:', user.role);
 
     // Verify password
     const passwordMatch = await bcrypt.compare(password, user.password_hash);
+    console.log('[LOGIN] Password match:', passwordMatch);
 
     if (!passwordMatch) {
+      console.error('[LOGIN] Password mismatch for:', email);
       return NextResponse.json(
         { error: 'Invalid email or password' },
         { status: 401 }
       );
     }
+
+    console.log('[LOGIN] Authentication successful for:', email);
 
     // Fetch employee details separately after password verification
     const { data: employee } = await supabaseAdmin
