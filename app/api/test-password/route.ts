@@ -22,7 +22,6 @@ export async function GET() {
       matchesExpected: match,
       freshHash: freshHash,
       matchesFresh: freshMatch,
-      bcryptVersion: bcrypt.version || 'unknown',
     });
   } catch (error: any) {
     return NextResponse.json({
