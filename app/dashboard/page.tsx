@@ -185,32 +185,74 @@ export default function DashboardPage() {
             </div>
 
             {myPerformance ? (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
-                <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-white/20">
-                  <div className="flex items-center justify-between mb-4">
-                    <BarChart3 className="w-8 h-8 text-yellow-300" />
-                    <span className="text-xs font-medium text-white/80 uppercase tracking-wide">MTD Sales</span>
+              <div className="mt-8 space-y-6">
+                {/* MTD Performance */}
+                <div>
+                  <h3 className="text-xl font-bold mb-4 text-white/90">MTD Performance</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                      <p className="text-xs text-white/70 mb-1">MF+SIF+MSCI</p>
+                      <p className="text-2xl font-bold">{formatCurrency(myPerformance.mtd?.mfSifMsci || 0)}</p>
+                    </div>
+                    <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                      <p className="text-xs text-white/70 mb-1">COB (100%)</p>
+                      <p className="text-2xl font-bold">{formatCurrency(myPerformance.mtd?.cob100 || 0)}</p>
+                    </div>
+                    <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                      <p className="text-xs text-white/70 mb-1">AIF+PMS+LAS+DYNAMO</p>
+                      <p className="text-2xl font-bold">{formatCurrency(myPerformance.mtd?.aifPmsLasDynamo || 0)}</p>
+                    </div>
+                    <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                      <p className="text-xs text-white/70 mb-1">ALTERNATE</p>
+                      <p className="text-2xl font-bold">{formatCurrency(myPerformance.mtd?.alternate || 0)}</p>
+                    </div>
                   </div>
-                  <p className="text-4xl font-bold mb-2">{formatCurrency(myPerformance.mtd)}</p>
-                  <p className="text-sm text-white/70">Current Month Performance</p>
+                  <div className="mt-4 bg-white/20 backdrop-blur-sm rounded-xl p-4 border border-white/30">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-semibold text-white/90">Total MTD</span>
+                      <span className="text-3xl font-bold">{formatCurrency(myPerformance.mtd?.total || 0)}</span>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-white/20">
-                  <div className="flex items-center justify-between mb-4">
-                    <Target className="w-8 h-8 text-green-300" />
-                    <span className="text-xs font-medium text-white/80 uppercase tracking-wide">YTD Sales</span>
+                {/* YTD Performance */}
+                <div>
+                  <h3 className="text-xl font-bold mb-4 text-white/90">YTD Performance</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                      <p className="text-xs text-white/70 mb-1">MF+SIF+MSCI</p>
+                      <p className="text-2xl font-bold">{formatCurrency(myPerformance.ytdTotal?.mfSifMsci || 0)}</p>
+                    </div>
+                    <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                      <p className="text-xs text-white/70 mb-1">COB (100%)</p>
+                      <p className="text-2xl font-bold">{formatCurrency(myPerformance.ytdTotal?.cob100 || 0)}</p>
+                    </div>
+                    <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                      <p className="text-xs text-white/70 mb-1">AIF+PMS+LAS+DYNAMO</p>
+                      <p className="text-2xl font-bold">{formatCurrency(myPerformance.ytdTotal?.aifPmsLasDynamo || 0)}</p>
+                    </div>
+                    <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                      <p className="text-xs text-white/70 mb-1">ALTERNATE</p>
+                      <p className="text-2xl font-bold">{formatCurrency(myPerformance.ytdTotal?.alternate || 0)}</p>
+                    </div>
                   </div>
-                  <p className="text-4xl font-bold mb-2">{formatCurrency(myPerformance.ytdTotal)}</p>
-                  <p className="text-sm text-white/70">Year to Date Performance</p>
+                  <div className="mt-4 bg-white/20 backdrop-blur-sm rounded-xl p-4 border border-white/30">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-semibold text-white/90">Total YTD</span>
+                      <span className="text-3xl font-bold">{formatCurrency(myPerformance.ytdTotal?.total || 0)}</span>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-white/20">
-                  <div className="flex items-center justify-between mb-4">
-                    <Award className="w-8 h-8 text-blue-300" />
-                    <span className="text-xs font-medium text-white/80 uppercase tracking-wide">Location</span>
+                {/* Location */}
+                <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                  <div className="flex items-center space-x-4">
+                    <Award className="w-8 h-8 text-yellow-300" />
+                    <div>
+                      <p className="text-sm text-white/70">Location</p>
+                      <p className="text-xl font-bold">{myPerformance.branch || 'N/A'} • {myPerformance.zone} Zone</p>
+                    </div>
                   </div>
-                  <p className="text-2xl font-bold mb-1">{myPerformance.branch || 'N/A'}</p>
-                  <p className="text-sm text-white/70">{myPerformance.zone} Zone</p>
                 </div>
               </div>
             ) : (
