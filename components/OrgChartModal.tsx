@@ -45,13 +45,20 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
       if (data.success) {
         // Filter to only downstream employees (current user + all subordinates)
         const allEmployees = data.employees;
-        const downstreamEmployees = getDownstreamEmployees(allEmployees, currentEmployeeNumber);
 
-        setEmployees(downstreamEmployees);
-        setCurrentEmployee(data.currentEmployee);
+        // If currentEmployee exists in data, use it; otherwise find by employee number
+        const current = data.currentEmployee || allEmployees.find(e => e.employeeNumber === currentEmployeeNumber);
 
-        // Initially only show current employee
-        setVisibleEmployees(new Set([currentEmployeeNumber]));
+        if (current) {
+          const downstreamEmployees = getDownstreamEmployees(allEmployees, current.employeeNumber);
+          setEmployees(downstreamEmployees);
+          setCurrentEmployee(current);
+          setVisibleEmployees(new Set([current.employeeNumber]));
+        } else {
+          console.error('Current employee not found:', currentEmployeeNumber);
+          setEmployees([]);
+          setCurrentEmployee(null);
+        }
       }
     } catch (error) {
       console.error('Failed to fetch org data:', error);
