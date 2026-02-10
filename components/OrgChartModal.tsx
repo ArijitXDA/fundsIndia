@@ -86,13 +86,24 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
 
   const getManagerChain = (employee: Employee): Employee[] => {
     const chain: Employee[] = [];
+    const visited = new Set<string>([employee.employeeNumber]);
     let current = employee;
+    let maxDepth = 20; // Prevent infinite loops
 
-    while (current.reportingManagerEmpNo) {
+    while (current.reportingManagerEmpNo && maxDepth > 0) {
+      // Check for circular reference
+      if (visited.has(current.reportingManagerEmpNo)) {
+        console.warn('Circular reference detected:', current.reportingManagerEmpNo);
+        break;
+      }
+
       const manager = employees.find(e => e.employeeNumber === current.reportingManagerEmpNo);
       if (!manager) break;
+
+      visited.add(manager.employeeNumber);
       chain.unshift(manager);
       current = manager;
+      maxDepth--;
     }
 
     return chain;
@@ -211,13 +222,18 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
   };
 
   const renderOrgTree = () => {
-    if (!currentEmployee) return null;
+    if (!currentEmployee) {
+      console.warn('No current employee found');
+      return null;
+    }
 
     // Get manager chain
     const managerChain = getManagerChain(currentEmployee);
+    console.log('Manager chain length:', managerChain.length);
 
     // Find the top-most manager in the chain
     const topManager = managerChain.length > 0 ? managerChain[0] : currentEmployee;
+    console.log('Top manager:', topManager.name, topManager.employeeNumber);
 
     // Render from top manager down
     return renderEmployeeCard(topManager, 0, topManager.employeeNumber === currentEmployeeNumber);
@@ -259,6 +275,14 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
                 <div className="text-center">
                   <div className="animate-spin rounded-full h-12 w-12 border-b-4 border-indigo-600 mx-auto" />
                   <p className="mt-4 text-gray-600">Loading organization structure...</p>
+                </div>
+              </div>
+            ) : employees.length === 0 ? (
+              <div className="flex items-center justify-center py-20">
+                <div className="text-center">
+                  <Users className="w-20 h-20 text-gray-300 mx-auto mb-4" />
+                  <p className="text-xl font-semibold text-gray-600 mb-2">No Organization Data</p>
+                  <p className="text-gray-500">Unable to load organizational structure</p>
                 </div>
               </div>
             ) : (
