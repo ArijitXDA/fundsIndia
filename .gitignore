@@ -35,3 +35,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# data files (sensitive employee/sales data)
+*.xlsx
+*.xls
+*.csv
+Employee\ Master*.xlsx
+Final\ Net\ Sales*.xlsx
+Advisory\ MIS*.csv
