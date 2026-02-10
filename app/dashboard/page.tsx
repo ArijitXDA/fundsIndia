@@ -147,7 +147,12 @@ export default function DashboardPage() {
   ];
 
   const userBusinessUnit = user?.employee?.business_unit;
-  const tabs = allTabs.filter(tab => tab.businessUnit === userBusinessUnit);
+
+  // B2B/B2C/Private Wealth users see only their tab
+  // All other business units see all 3 tabs
+  const tabs = ['B2B', 'B2C', 'Private Wealth'].includes(userBusinessUnit)
+    ? allTabs.filter(tab => tab.businessUnit === userBusinessUnit)
+    : allTabs;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
@@ -485,6 +490,49 @@ export default function DashboardPage() {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {activeTab === 'PW' && (
+            <div>
+              <div className="bg-gradient-to-r from-purple-600 to-pink-600 px-8 py-6">
+                <div className="flex items-center space-x-3">
+                  <Trophy className="w-8 h-8 text-yellow-300" />
+                  <h2 className="text-2xl font-bold text-white">Top 10 Private Wealth Advisors</h2>
+                </div>
+                <p className="text-purple-100 mt-1">Private Wealth Performance Metrics</p>
+              </div>
+
+              <div className="p-8">
+                <div className="text-center py-16">
+                  <Award className="w-24 h-24 text-purple-200 mx-auto mb-6" />
+                  <p className="text-2xl font-bold text-gray-700 mb-3">Private Wealth Data Coming Soon</p>
+                  <p className="text-gray-500 max-w-md mx-auto">
+                    Import the Private Wealth data to see advisor rankings and performance metrics
+                  </p>
+                  <div className="mt-8 bg-purple-50 border border-purple-200 rounded-lg p-6 max-w-lg mx-auto text-left">
+                    <h4 className="font-semibold text-purple-900 mb-3">📊 PW Metrics Will Include:</h4>
+                    <ul className="text-sm text-purple-800 space-y-2">
+                      <li className="flex items-start">
+                        <span className="mr-2">•</span>
+                        <span>AUM (Assets Under Management)</span>
+                      </li>
+                      <li className="flex items-start">
+                        <span className="mr-2">•</span>
+                        <span>Net Inflow (MTD & YTD)</span>
+                      </li>
+                      <li className="flex items-start">
+                        <span className="mr-2">•</span>
+                        <span>Revenue Generated</span>
+                      </li>
+                      <li className="flex items-start">
+                        <span className="mr-2">•</span>
+                        <span>Client Acquisition</span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>
