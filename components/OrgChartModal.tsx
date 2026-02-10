@@ -11,7 +11,6 @@ interface Employee {
   mobile: string;
   designation: string;
   businessUnit: string;
-  reportingManager: string;
   reportingManagerEmpNo: string;
   location: string;
   ytdPerformance: string;
