@@ -30,29 +30,32 @@ export async function GET(request: NextRequest) {
       }, { status: 404 });
     }
 
+    // Handle employee join - it might be an object or array depending on relationship
+    const employeeData = Array.isArray(user.employee) ? user.employee[0] : user.employee;
+
     const diagnosis: any = {
       userFound: true,
       userEmail: user.email,
       userRole: user.role,
       employeeIdInUsersTable: user.employee_id,
-      employeeJoinSuccessful: !!user.employee,
+      employeeJoinSuccessful: !!employeeData,
     };
 
-    if (user.employee) {
+    if (employeeData) {
       diagnosis.employeeData = {
-        employeeNumber: user.employee.employee_number,
-        fullName: user.employee.full_name,
-        workEmail: user.employee.work_email,
-        businessUnit: user.employee.business_unit,
-        jobTitle: user.employee.job_title,
-        reportingManagerEmpNo: user.employee.reporting_manager_emp_number,
+        employeeNumber: employeeData.employee_number,
+        fullName: employeeData.full_name,
+        workEmail: employeeData.work_email,
+        businessUnit: employeeData.business_unit,
+        jobTitle: employeeData.job_title,
+        reportingManagerEmpNo: employeeData.reporting_manager_emp_number,
       };
 
       // Check if this employee number exists in org-hierarchy API
       const { data: orgData } = await supabaseAdmin
         .from('employees')
         .select('employee_number, full_name')
-        .eq('employee_number', user.employee.employee_number);
+        .eq('employee_number', employeeData.employee_number);
 
       diagnosis.employeeFoundInOrgHierarchy = orgData && orgData.length > 0;
 
@@ -60,17 +63,17 @@ export async function GET(request: NextRequest) {
       const { data: reports } = await supabaseAdmin
         .from('employees')
         .select('employee_number, full_name')
-        .eq('reporting_manager_emp_number', user.employee.employee_number);
+        .eq('reporting_manager_emp_number', employeeData.employee_number);
 
       diagnosis.directReportsCount = reports?.length || 0;
       diagnosis.directReports = reports;
 
       // Check if manager exists
-      if (user.employee.reporting_manager_emp_number) {
+      if (employeeData.reporting_manager_emp_number) {
         const { data: manager } = await supabaseAdmin
           .from('employees')
           .select('employee_number, full_name')
-          .eq('employee_number', user.employee.reporting_manager_emp_number);
+          .eq('employee_number', employeeData.reporting_manager_emp_number);
 
         diagnosis.managerExists = manager && manager.length > 0;
         diagnosis.managerData = manager?.[0];
