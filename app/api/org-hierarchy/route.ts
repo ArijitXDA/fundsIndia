@@ -81,11 +81,25 @@ export async function GET(request: Request) {
       });
     }
 
+    // Create a set of all valid employee numbers for validation
+    const validEmployeeNumbers = new Set(employees?.map(e => e.employee_number) || []);
+
     // Enrich employees with performance data
     const enrichedEmployees = employees?.map((emp: any) => {
       const perfByEmpId = performanceMap[emp.employee_number];
       const perfByEmail = performanceMap[emp.work_email];
       const performance = perfByEmpId || perfByEmail || null;
+
+      // Fix circular references: if employee reports to themselves, set to null
+      let reportingManager = emp.reporting_manager_emp_number;
+      if (reportingManager === emp.employee_number) {
+        reportingManager = null;
+      }
+
+      // Fix broken references: if manager doesn't exist, set to null
+      if (reportingManager && !validEmployeeNumbers.has(reportingManager)) {
+        reportingManager = null;
+      }
 
       return {
         id: emp.id,
@@ -95,7 +109,7 @@ export async function GET(request: Request) {
         mobile: emp.mobile_phone,
         designation: emp.job_title,
         businessUnit: emp.business_unit,
-        reportingManagerEmpNo: emp.reporting_manager_emp_number,
+        reportingManagerEmpNo: reportingManager,
         location: emp.location,
         ytdPerformance: performance?.ytd || '0.00',
         performanceType: performance?.type || null,
