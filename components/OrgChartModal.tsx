@@ -43,7 +43,11 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
       const data = await response.json();
 
       if (data.success) {
-        setEmployees(data.employees);
+        // Filter to only downstream employees (current user + all subordinates)
+        const allEmployees = data.employees;
+        const downstreamEmployees = getDownstreamEmployees(allEmployees, currentEmployeeNumber);
+
+        setEmployees(downstreamEmployees);
         setCurrentEmployee(data.currentEmployee);
 
         // Initially only show current employee
@@ -56,17 +60,33 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
     }
   };
 
-  const toggleManager = (employeeNumber: string) => {
-    const employee = employees.find(e => e.employeeNumber === employeeNumber);
-    if (!employee?.reportingManagerEmpNo) return;
+  // Get all downstream employees (current + all subordinates recursively)
+  const getDownstreamEmployees = (allEmployees: Employee[], rootEmpNo: string): Employee[] => {
+    const downstream: Employee[] = [];
+    const visited = new Set<string>();
 
-    const newVisible = new Set(visibleEmployees);
-    if (newVisible.has(employee.reportingManagerEmpNo)) {
-      newVisible.delete(employee.reportingManagerEmpNo);
-    } else {
-      newVisible.add(employee.reportingManagerEmpNo);
-    }
-    setVisibleEmployees(newVisible);
+    const collectDownstream = (empNo: string) => {
+      if (visited.has(empNo)) return;
+      visited.add(empNo);
+
+      const employee = allEmployees.find(e => e.employeeNumber === empNo);
+      if (employee) {
+        downstream.push(employee);
+
+        // Get all direct reports
+        const reports = allEmployees.filter(e => e.reportingManagerEmpNo === empNo);
+        reports.forEach(report => collectDownstream(report.employeeNumber));
+      }
+    };
+
+    collectDownstream(rootEmpNo);
+    return downstream;
+  };
+
+  const toggleManager = (employeeNumber: string) => {
+    // Managers cannot be shown (only downstream allowed)
+    // Remove this functionality for access control
+    return;
   };
 
   const toggleDirectReports = (employeeNumber: string) => {
@@ -91,8 +111,8 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
   };
 
   const hasManager = (employeeNumber: string) => {
-    const employee = employees.find(e => e.employeeNumber === employeeNumber);
-    return employee?.reportingManagerEmpNo ? true : false;
+    // Don't show manager arrow (downstream only access)
+    return false;
   };
 
   const hasReports = (employeeNumber: string) => {
@@ -114,6 +134,25 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
     const managerVisible = isManagerVisible(employee.employeeNumber);
     const reportsVisible = areReportsVisible(employee.employeeNumber);
 
+    // Get color based on business unit
+    const getCardColor = () => {
+      if (isCurrentUser) {
+        return 'bg-gradient-to-r from-indigo-50 to-purple-50 border-indigo-400 ring-2 ring-indigo-200';
+      }
+
+      switch (employee.businessUnit) {
+        case 'B2B':
+          return 'bg-green-50 border-green-200 hover:border-green-400';
+        case 'B2C':
+          return 'bg-orange-50 border-orange-200 hover:border-orange-400';
+        case 'Private Wealth':
+        case 'PW':
+          return 'bg-blue-50 border-blue-200 hover:border-blue-400';
+        default:
+          return 'bg-gray-50 border-gray-200 hover:border-gray-400';
+      }
+    };
+
     return (
       <div className="flex flex-col items-center">
         {/* Up Arrow */}
@@ -129,11 +168,7 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
 
         {/* Employee Card */}
         <div
-          className={`relative rounded-lg shadow-md transition-all duration-200 border-2 w-64 ${
-            isCurrentUser
-              ? 'bg-gradient-to-r from-indigo-50 to-purple-50 border-indigo-400 ring-2 ring-indigo-200'
-              : 'bg-white border-gray-200 hover:border-indigo-300 hover:shadow-lg'
-          }`}
+          className={`relative rounded-lg shadow-lg transition-all duration-200 border-2 w-64 ${getCardColor()}`}
         >
           <div className="p-3">
             {/* Header */}

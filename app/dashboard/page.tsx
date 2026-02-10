@@ -44,7 +44,7 @@ interface B2CAdvisor {
   newSIPInflowYTD: string;
 }
 
-type TabType = 'B2B' | 'B2C';
+type TabType = 'B2B' | 'B2C' | 'PW';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -139,10 +139,15 @@ export default function DashboardPage() {
     return `₹${num.toFixed(2)} Cr`;
   };
 
-  const tabs = [
-    { id: 'B2B' as TabType, name: 'B2B', icon: Building2, description: 'Business to Business' },
-    { id: 'B2C' as TabType, name: 'B2C', icon: Users, description: 'Digital Advisory' },
+  // Filter tabs based on user's business unit
+  const allTabs = [
+    { id: 'B2B' as TabType, name: 'B2B', icon: Building2, description: 'Business to Business', businessUnit: 'B2B' },
+    { id: 'B2C' as TabType, name: 'B2C', icon: Users, description: 'Digital Advisory', businessUnit: 'B2C' },
+    { id: 'PW' as TabType, name: 'Private Wealth', icon: Award, description: 'Private Wealth', businessUnit: 'Private Wealth' },
   ];
+
+  const userBusinessUnit = user?.employee?.business_unit;
+  const tabs = allTabs.filter(tab => tab.businessUnit === userBusinessUnit);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
