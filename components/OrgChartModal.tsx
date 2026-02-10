@@ -15,6 +15,7 @@ interface Employee {
   location: string;
   ytdPerformance: string;
   performanceType: string | null;
+  teamYTD: string;
 }
 
 interface OrgChartModalProps {
@@ -157,8 +158,8 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
 
               <div className="flex items-center">
                 <TrendingUp className="w-3 h-3 mr-1.5 text-green-500 flex-shrink-0" />
-                <span className="font-semibold text-gray-900">₹{employee.ytdPerformance} Cr</span>
-                <span className="ml-1 text-gray-500">YTD</span>
+                <span className="font-semibold text-gray-900">₹{employee.teamYTD} Cr</span>
+                <span className="ml-1 text-gray-500">Team YTD</span>
               </div>
 
               <a

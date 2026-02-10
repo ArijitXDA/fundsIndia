@@ -116,16 +116,42 @@ export async function GET(request: Request) {
       };
     });
 
+    // Calculate aggregated YTD for each employee (self + all subordinates)
+    const calculateTeamYTD = (empNo: string, visited = new Set<string>()): number => {
+      if (visited.has(empNo)) return 0; // Prevent circular references
+      visited.add(empNo);
+
+      const employee = enrichedEmployees?.find(e => e.employeeNumber === empNo);
+      if (!employee) return 0;
+
+      // Start with own performance
+      let total = parseFloat(employee.ytdPerformance || '0');
+
+      // Add direct reports' team YTD (recursive)
+      const directReports = enrichedEmployees?.filter(e => e.reportingManagerEmpNo === empNo) || [];
+      directReports.forEach(report => {
+        total += calculateTeamYTD(report.employeeNumber, new Set(visited));
+      });
+
+      return total;
+    };
+
+    // Add aggregated YTD to each employee
+    const enrichedWithTeamYTD = enrichedEmployees?.map(emp => ({
+      ...emp,
+      teamYTD: calculateTeamYTD(emp.employeeNumber).toFixed(2),
+    }));
+
     // Find current employee
     const currentEmployee = employeeId
-      ? enrichedEmployees?.find(e => e.employeeNumber === employeeId)
+      ? enrichedWithTeamYTD?.find(e => e.employeeNumber === employeeId)
       : null;
 
     return NextResponse.json({
       success: true,
-      employees: enrichedEmployees,
+      employees: enrichedWithTeamYTD,
       currentEmployee,
-      totalEmployees: enrichedEmployees?.length || 0,
+      totalEmployees: enrichedWithTeamYTD?.length || 0,
     });
   } catch (error: any) {
     return NextResponse.json({
