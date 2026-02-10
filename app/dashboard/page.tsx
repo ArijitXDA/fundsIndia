@@ -23,6 +23,18 @@ interface TopPerformer {
   ytdSales: string;
 }
 
+interface B2CAdvisor {
+  rank: number;
+  advisor: string;
+  team: string;
+  netInflowMTD: string;
+  netInflowYTD: string;
+  currentAUM: string;
+  aumGrowthPct: string;
+  assignedLeads: number;
+  newSIPInflowYTD: string;
+}
+
 type TabType = 'B2B' | 'B2C';
 
 export default function DashboardPage() {
@@ -30,6 +42,7 @@ export default function DashboardPage() {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [salesData, setSalesData] = useState<any>(null);
+  const [b2cData, setB2cData] = useState<any>(null);
   const [myPerformance, setMyPerformance] = useState<EmployeeSales | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('B2B');
 
@@ -49,13 +62,20 @@ export default function DashboardPage() {
           setActiveTab('B2C');
         }
 
-        // Fetch sales data
+        // Fetch B2B sales data
         const salesResponse = await fetch('/api/sales-summary');
         const salesData = await salesResponse.json();
         setSalesData(salesData);
 
+        // Fetch B2C advisory data
+        const b2cResponse = await fetch('/api/b2c-summary');
+        const b2cData = await b2cResponse.json();
+        setB2cData(b2cData);
+
         // Find current user's performance
         const empNumber = data.user.employee?.employee_number;
+        const userEmail = data.user.email;
+
         if (empNumber && salesData.allEmployeeSales) {
           const myData = salesData.allEmployeeSales.find(
             (emp: EmployeeSales) => emp.employeeId === empNumber
@@ -319,39 +339,83 @@ export default function DashboardPage() {
                   <Trophy className="w-8 h-8 text-yellow-300" />
                   <h2 className="text-2xl font-bold text-white">Top 10 B2C Advisors</h2>
                 </div>
-                <p className="text-blue-100 mt-1">Based on Advisory Performance Metrics</p>
+                <p className="text-blue-100 mt-1">Based on Net Inflow YTD Performance</p>
               </div>
 
               <div className="p-8">
-                <div className="text-center py-16">
-                  <Users className="w-24 h-24 text-blue-200 mx-auto mb-6" />
-                  <p className="text-2xl font-bold text-gray-700 mb-3">B2C Advisory Data Coming Soon</p>
-                  <p className="text-gray-500 max-w-md mx-auto">
-                    Import the Advisory MIS data to see B2C advisor rankings and performance metrics
-                  </p>
-                  <div className="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-6 max-w-lg mx-auto text-left">
-                    <h4 className="font-semibold text-blue-900 mb-3">📊 B2C Metrics Will Include:</h4>
-                    <ul className="text-sm text-blue-800 space-y-2">
-                      <li className="flex items-start">
-                        <span className="mr-2">•</span>
-                        <span>Net Inflow (MTD & YTD)</span>
-                      </li>
-                      <li className="flex items-start">
-                        <span className="mr-2">•</span>
-                        <span>Current AUM (Mark-to-Market)</span>
-                      </li>
-                      <li className="flex items-start">
-                        <span className="mr-2">•</span>
-                        <span>SIP Book & New SIP Additions</span>
-                      </li>
-                      <li className="flex items-start">
-                        <span className="mr-2">•</span>
-                        <span>Assigned Leads & Conversion</span>
-                      </li>
-                    </ul>
+                {b2cData?.top10Performers && b2cData.top10Performers.length > 0 ? (
+                  <div className="space-y-4">
+                    {b2cData.top10Performers.map((advisor: B2CAdvisor, index: number) => (
+                      <div
+                        key={advisor.advisor}
+                        className={`flex items-center justify-between p-5 rounded-xl transition-all duration-200 hover:shadow-md ${
+                          index < 3
+                            ? 'bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-200'
+                            : 'bg-gray-50 border border-gray-200 hover:border-blue-300'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-6 flex-1">
+                          <div className="flex items-center justify-center w-12 h-12 rounded-full bg-white shadow-md">
+                            {getRankIcon(advisor.rank)}
+                          </div>
+
+                          <div className="flex-1">
+                            <h3 className="text-lg font-bold text-gray-900">{advisor.advisor}</h3>
+                            <p className="text-sm text-gray-600">
+                              {advisor.team} • {advisor.assignedLeads} Leads
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center space-x-6 text-right">
+                          <div>
+                            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Net Inflow MTD</p>
+                            <p className="text-lg font-bold text-blue-600">₹{advisor.netInflowMTD} Cr</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Net Inflow YTD</p>
+                            <p className="text-2xl font-bold text-cyan-600">₹{advisor.netInflowYTD} Cr</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Current AUM</p>
+                            <p className="text-lg font-bold text-purple-600">₹{advisor.currentAUM} Cr</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-12">
+                    <Users className="w-20 h-20 text-gray-300 mx-auto mb-4" />
+                    <p className="text-xl font-semibold text-gray-600 mb-2">No B2C Advisory Data</p>
+                    <p className="text-gray-500">B2C advisor performance will appear here once data is available</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Summary Stats for B2C */}
+              {b2cData?.summary && (
+                <div className="bg-gray-50 px-8 py-6 border-t border-gray-200">
+                  <div className="grid grid-cols-4 gap-6">
+                    <div className="text-center">
+                      <p className="text-sm text-gray-600 mb-1">Total Advisors</p>
+                      <p className="text-2xl font-bold text-gray-900">{b2cData.summary.totalAdvisors}</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm text-gray-600 mb-1">Net Inflow MTD</p>
+                      <p className="text-2xl font-bold text-blue-600">₹{b2cData.summary.totalNetInflowMTD} Cr</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm text-gray-600 mb-1">Net Inflow YTD</p>
+                      <p className="text-2xl font-bold text-cyan-600">₹{b2cData.summary.totalNetInflowYTD} Cr</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm text-gray-600 mb-1">Total Current AUM</p>
+                      <p className="text-2xl font-bold text-purple-600">₹{b2cData.summary.totalCurrentAUM} Cr</p>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
         </div>
