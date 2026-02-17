@@ -45,45 +45,18 @@ export async function POST(request: NextRequest) {
       .eq('email', normalizedEmail)
       .single();
 
-    // Generate a Supabase Auth signup link (magic link style — no password needed at this stage)
-    // This sends a confirmation email; user will set password on /set-password page
+    // Use magiclink for all cases — works for both new and existing Supabase Auth users,
+    // does not require a password field, and redirects to /set-password where user sets their password.
     const siteUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://funds-india-8134.vercel.app';
     const redirectTo = `${siteUrl}/auth/callback?next=/set-password`;
 
-    const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
-      type: 'signup',
+    const { error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'magiclink',
       email: normalizedEmail,
-      options: {
-        redirectTo,
-      },
+      options: { redirectTo },
     });
 
     if (linkError) {
-      // If user already exists in Supabase Auth, generate a magic link instead
-      if (linkError.message?.includes('already registered')) {
-        const { data: magicData, error: magicError } = await supabaseAdmin.auth.admin.generateLink({
-          type: 'magiclink',
-          email: normalizedEmail,
-          options: { redirectTo },
-        });
-
-        if (magicError) {
-          console.error('[SIGNUP] Magic link error:', magicError);
-          return NextResponse.json(
-            { error: 'Failed to send verification email. Please try again.' },
-            { status: 500 }
-          );
-        }
-
-        // Send the magic link email via Supabase (it auto-sends when using generateLink with admin)
-        return NextResponse.json({
-          success: true,
-          message: 'Verification email sent. Please check your inbox.',
-          employeeName: employee.full_name,
-          isExistingUser: true,
-        });
-      }
-
       console.error('[SIGNUP] Generate link error:', linkError);
       return NextResponse.json(
         { error: 'Failed to send verification email. Please try again.' },
