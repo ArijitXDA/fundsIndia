@@ -60,12 +60,18 @@ export async function POST(request: NextRequest) {
 
     if (otpError) {
       console.error('[SIGNUP] OTP error:', otpError.message, otpError.status, otpError);
+
+      const isRateLimit =
+        otpError.message?.toLowerCase().includes('rate limit') ||
+        otpError.message?.toLowerCase().includes('too many');
+
       return NextResponse.json(
         {
-          error: 'Failed to send verification email. Please try again.',
-          _debug: otpError.message,
+          error: isRateLimit
+            ? 'Too many verification emails sent recently. Please wait a few minutes and try again.'
+            : 'Failed to send verification email. Please try again.',
         },
-        { status: 500 }
+        { status: isRateLimit ? 429 : 500 }
       );
     }
 
