@@ -48,48 +48,104 @@ export default function SetPasswordPage() {
 
   const strength = getPasswordStrength(password);
 
-  // On mount, wait for Supabase Auth session.
-  // Magic links deliver the session via URL hash (#access_token=...) which is processed
-  // asynchronously by the Supabase client. We listen to onAuthStateChange to catch it.
   useEffect(() => {
     let settled = false;
 
-    // First try: check if session already exists (e.g. PKCE code was already exchanged)
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    const resolve = (email: string) => {
       if (settled) return;
-      if (session?.user?.email) {
-        settled = true;
-        setUserEmail(session.user.email);
-        setState('form');
-      }
-    });
-
-    // Second: listen for auth state changes (catches magic link hash fragment processing)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (settled) return;
-      if (
-        (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'PASSWORD_RECOVERY') &&
-        session?.user?.email
-      ) {
-        settled = true;
-        setUserEmail(session.user.email);
-        setState('form');
-      }
-    });
-
-    // Timeout: if no session after 8 seconds, show error
-    const timeout = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        setState('error');
-        setError('Your verification link has expired or is invalid. Please request a new one.');
-      }
-    }, 8000);
-
-    return () => {
-      subscription.unsubscribe();
-      clearTimeout(timeout);
+      settled = true;
+      setUserEmail(email);
+      setState('form');
     };
+
+    const fail = (msg: string) => {
+      if (settled) return;
+      settled = true;
+      setError(msg);
+      setState('error');
+    };
+
+    // Helper: parse the #access_token hash fragment and set session manually
+    const tryHashFragment = async () => {
+      const hash = window.location.hash;
+      if (!hash) return false;
+
+      // Parse hash params: #access_token=...&type=signup&...
+      const params = new URLSearchParams(hash.substring(1));
+      const accessToken = params.get('access_token');
+      const refreshToken = params.get('refresh_token');
+      const type = params.get('type'); // 'signup' | 'recovery' | 'magiclink'
+
+      if (accessToken && refreshToken) {
+        const { data, error: sessionError } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+        if (sessionError || !data.session?.user?.email) return false;
+        // Clear the hash from the URL so tokens aren't visible
+        window.history.replaceState(null, '', window.location.pathname);
+        resolve(data.session.user.email);
+        return true;
+      }
+
+      return false;
+    };
+
+    // Helper: check ?token_hash=&type= query params (Supabase OTP flow)
+    const tryTokenHash = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const token_hash = params.get('token_hash');
+      const type = params.get('type');
+
+      if (token_hash && type) {
+        const { data, error: verifyError } = await supabase.auth.verifyOtp({
+          token_hash,
+          type: type as any,
+        });
+        if (verifyError || !data.session?.user?.email) return false;
+        resolve(data.session.user.email);
+        return true;
+      }
+
+      return false;
+    };
+
+    const init = async () => {
+      // 1. Try existing session first (e.g. PKCE flow already exchanged)
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user?.email) {
+        resolve(session.user.email);
+        return;
+      }
+
+      // 2. Try parsing hash fragment directly (#access_token=...)
+      const handledHash = await tryHashFragment();
+      if (handledHash) return;
+
+      // 3. Try token_hash query param
+      const handledToken = await tryTokenHash();
+      if (handledToken) return;
+
+      // 4. Fall back to onAuthStateChange listener — Supabase JS processes
+      //    the hash asynchronously in some cases
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (settled) return;
+        if (
+          (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'PASSWORD_RECOVERY') &&
+          session?.user?.email
+        ) {
+          resolve(session.user.email);
+        }
+      });
+
+      // 5. Timeout after 10 seconds
+      setTimeout(() => {
+        subscription.unsubscribe();
+        fail('Your verification link has expired or is invalid. Please request a new one.');
+      }, 10000);
+    };
+
+    init();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
