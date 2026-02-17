@@ -74,7 +74,6 @@ export default function SetPasswordPage() {
       const params = new URLSearchParams(hash.substring(1));
       const accessToken = params.get('access_token');
       const refreshToken = params.get('refresh_token');
-      const type = params.get('type'); // 'signup' | 'recovery' | 'magiclink'
 
       if (accessToken && refreshToken) {
         const { data, error: sessionError } = await supabase.auth.setSession({
@@ -145,7 +144,10 @@ export default function SetPasswordPage() {
       }, 10000);
     };
 
-    init();
+    init().catch((err) => {
+      console.error('[SET-PASSWORD] init error:', err);
+      fail('An unexpected error occurred. Please request a new verification link.');
+    });
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
