@@ -92,16 +92,19 @@ export async function POST(request: NextRequest) {
       userId = newUser.id;
     }
 
-    // Log the activity
-    await supabaseAdmin
-      .from('activity_logs')
-      .insert({
-        user_id: userId,
-        employee_id: employee.id,
-        action_type: 'password_set',
-        action_details: { method: 'supabase_auth', isNewUser: !existingUser },
-      })
-      .catch(() => {}); // Don't fail if logging fails
+    // Log the activity (best-effort, don't fail if logging fails)
+    try {
+      await supabaseAdmin
+        .from('activity_logs')
+        .insert({
+          user_id: userId,
+          employee_id: employee.id,
+          action_type: 'password_set',
+          action_details: { method: 'supabase_auth', isNewUser: !existingUser },
+        });
+    } catch (_) {
+      // Logging failure is non-fatal
+    }
 
     // Issue our custom session cookie (same format as login route)
     const sessionData = {
