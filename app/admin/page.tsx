@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Shield, ArrowLeft, Users, BarChart2, TrendingUp, Briefcase,
-  UserCog, Trophy, Network, Search, Loader2, AlertCircle,
-  CheckCircle, Trash2, Plus, LogIn, ChevronRight, X
+  UserCog, Trophy, Search, Loader2, AlertCircle,
+  CheckCircle, Trash2, Plus, LogIn, ChevronRight, X,
+  Upload, FileSpreadsheet, Eye, RefreshCw, AlertTriangle,
+  UserPlus, UserMinus, UserCheck, ChevronDown, ChevronUp,
 } from 'lucide-react';
 
 // ── Role definitions ──────────────────────────────────────────────────────────
@@ -23,6 +25,14 @@ const ROLE_LABELS: Record<number, string> = {
   11: 'Create/Edit/Delete a Contest',
   12: 'Upload/Update/Edit Partner/IFA Vs RM Mapping',
   13: 'Create/Update/Edit IC Vs RM Mapping',
+};
+
+// Maps role ID → API endpoint
+const ROLE_ENDPOINTS: Record<number, string> = {
+  1: '/api/admin/upload/b2b-mtd',
+  2: '/api/admin/upload/b2b-ytd',
+  3: '/api/admin/upload/b2c',
+  4: '/api/admin/upload/employees',
 };
 
 const TIER_ROLES: Record<string, number[]> = {
@@ -175,11 +185,45 @@ export default function AdminPage() {
           {activeSection === 'impersonate' && (
             <ImpersonateSection showToast={showToast} router={router} />
           )}
-          {activeSection === 'b2b' && <PlaceholderSection title="B2B Data Management" roles={[1,2,5,6,12]} adminRoles={adminRole.roles} />}
-          {activeSection === 'b2c' && <PlaceholderSection title="B2C Data Management" roles={[3,7]} adminRoles={adminRole.roles} />}
-          {activeSection === 'pw'  && <PlaceholderSection title="Private Wealth Data" roles={[8,9,10,13]} adminRoles={adminRole.roles} />}
-          {activeSection === 'employees' && <PlaceholderSection title="Employee Management" roles={[4]} adminRoles={adminRole.roles} />}
-          {activeSection === 'contests' && <PlaceholderSection title="Contest Management" roles={[11]} adminRoles={adminRole.roles} />}
+          {activeSection === 'b2b' && (
+            <DataSection
+              title="B2B Data Management"
+              description="Upload and manage B2B sales MIS data for the current month and year-to-date."
+              roles={[1, 2, 5, 6, 12]}
+              adminRoles={adminRole.roles}
+              showToast={showToast}
+            />
+          )}
+          {activeSection === 'b2c' && (
+            <DataSection
+              title="B2C Data Management"
+              description="Upload and manage B2C advisory MIS and target data."
+              roles={[3, 7]}
+              adminRoles={adminRole.roles}
+              showToast={showToast}
+            />
+          )}
+          {activeSection === 'pw' && (
+            <DataSection
+              title="Private Wealth Data"
+              description="Upload and manage Private Wealth MIS and target data."
+              roles={[8, 9, 10, 13]}
+              adminRoles={adminRole.roles}
+              showToast={showToast}
+            />
+          )}
+          {activeSection === 'employees' && (
+            <DataSection
+              title="Employee Management"
+              description="Upload and sync the employee master data. Shows additions, updates, and deactivations before confirming."
+              roles={[4]}
+              adminRoles={adminRole.roles}
+              showToast={showToast}
+            />
+          )}
+          {activeSection === 'contests' && (
+            <ComingSoonSection title="Contest Management" description="Create, edit, and manage R&R contests." />
+          )}
         </main>
       </div>
 
@@ -195,6 +239,620 @@ export default function AdminPage() {
       )}
     </div>
   );
+}
+
+// ── Data Section (wraps upload panels for each role) ──────────────────────────
+function DataSection({
+  title, description, roles, adminRoles, showToast,
+}: {
+  title: string;
+  description: string;
+  roles: number[];
+  adminRoles: number[];
+  showToast: Function;
+}) {
+  const allowedRoles = roles.filter(r => adminRoles?.includes(r));
+
+  return (
+    <div>
+      <h2 className="text-2xl font-bold text-gray-900 mb-1">{title}</h2>
+      <p className="text-sm text-gray-500 mb-6">{description}</p>
+
+      <div className="space-y-6">
+        {allowedRoles.map(roleId => {
+          const endpoint = ROLE_ENDPOINTS[roleId];
+          if (endpoint) {
+            return (
+              <UploadPanel
+                key={roleId}
+                roleId={roleId}
+                endpoint={endpoint}
+                showToast={showToast}
+              />
+            );
+          }
+          return (
+            <ComingSoonCard key={roleId} roleId={roleId} />
+          );
+        })}
+        {allowedRoles.length === 0 && (
+          <div className="text-center py-16 text-gray-400">
+            <Shield className="w-10 h-10 mx-auto mb-3 opacity-30" />
+            <p>No roles assigned for this section.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Upload Panel (two-phase: preview → confirm) ───────────────────────────────
+type UploadPhase = 'idle' | 'uploading' | 'preview' | 'confirming' | 'done' | 'error';
+
+function UploadPanel({ roleId, endpoint, showToast }: { roleId: number; endpoint: string; showToast: Function }) {
+  const [phase, setPhase] = useState<UploadPhase>('idle');
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<any>(null);
+  const [result, setResult] = useState<any>(null);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [dragOver, setDragOver] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const reset = () => {
+    setPhase('idle');
+    setFile(null);
+    setPreview(null);
+    setResult(null);
+    setErrorMsg('');
+    setShowDetails(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleFile = (f: File) => {
+    setFile(f);
+    handleUpload(f);
+  };
+
+  const handleUpload = async (f: File) => {
+    setPhase('uploading');
+    setErrorMsg('');
+    const form = new FormData();
+    form.append('file', f);
+    form.append('confirm', 'false');
+
+    try {
+      const res = await fetch(endpoint, { method: 'POST', body: form });
+      const data = await res.json();
+      if (!res.ok) {
+        setErrorMsg(data.error || 'Failed to parse file');
+        setPhase('error');
+        return;
+      }
+      setPreview(data);
+      setPhase('preview');
+    } catch (e: any) {
+      setErrorMsg(e.message || 'Network error');
+      setPhase('error');
+    }
+  };
+
+  const handleConfirm = async () => {
+    if (!file) return;
+    setPhase('confirming');
+    const form = new FormData();
+    form.append('file', file);
+    form.append('confirm', 'true');
+
+    try {
+      const res = await fetch(endpoint, { method: 'POST', body: form });
+      const data = await res.json();
+      if (!res.ok) {
+        setErrorMsg(data.error || 'Failed to execute upload');
+        setPhase('error');
+        return;
+      }
+      setResult(data);
+      setPhase('done');
+      showToast('success', buildSuccessMessage(roleId, data));
+    } catch (e: any) {
+      setErrorMsg(e.message || 'Network error');
+      setPhase('error');
+    }
+  };
+
+  const buildSuccessMessage = (rId: number, data: any) => {
+    if (rId === 4) {
+      const r = data.result;
+      return `Employees synced: +${r.added} new, ${r.updated} updated, ${r.deactivated} deactivated`;
+    }
+    return `Successfully uploaded ${data.result?.inserted ?? 0} records from ${data.result?.filename ?? 'file'}`;
+  };
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50">
+        <div className="flex items-center space-x-3">
+          <div className="p-2 bg-indigo-100 rounded-lg">
+            <FileSpreadsheet className="w-4 h-4 text-indigo-600" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-gray-900 text-sm">{ROLE_LABELS[roleId]}</h3>
+            <p className="text-xs text-gray-400 mt-0.5">Role ID: {roleId} · {getEndpointLabel(endpoint)}</p>
+          </div>
+        </div>
+        {phase !== 'idle' && (
+          <button
+            onClick={reset}
+            className="flex items-center space-x-1.5 text-xs text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+          >
+            <RefreshCw className="w-3 h-3" />
+            <span>Reset</span>
+          </button>
+        )}
+      </div>
+
+      <div className="p-6">
+        {/* IDLE — file picker */}
+        {phase === 'idle' && (
+          <div
+            className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${
+              dragOver ? 'border-indigo-400 bg-indigo-50' : 'border-gray-300 hover:border-indigo-300 hover:bg-gray-50'
+            }`}
+            onClick={() => fileInputRef.current?.click()}
+            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={e => {
+              e.preventDefault();
+              setDragOver(false);
+              const f = e.dataTransfer.files[0];
+              if (f) handleFile(f);
+            }}
+          >
+            <Upload className="w-8 h-8 text-gray-300 mx-auto mb-3" />
+            <p className="text-sm font-medium text-gray-600">
+              Drag &amp; drop your file here, or <span className="text-indigo-600">click to browse</span>
+            </p>
+            <p className="text-xs text-gray-400 mt-1">Accepts .xlsx, .xls, .csv</p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+            />
+          </div>
+        )}
+
+        {/* UPLOADING — parsing */}
+        {phase === 'uploading' && (
+          <div className="flex flex-col items-center justify-center py-10 space-y-3">
+            <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+            <p className="text-sm text-gray-600 font-medium">Parsing file: <span className="font-semibold">{file?.name}</span></p>
+            <p className="text-xs text-gray-400">Analyzing data and computing changes…</p>
+          </div>
+        )}
+
+        {/* ERROR */}
+        {phase === 'error' && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-5">
+            <div className="flex items-start space-x-3">
+              <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-red-800 text-sm">Upload Failed</p>
+                <p className="text-sm text-red-700 mt-1">{errorMsg}</p>
+                <button
+                  onClick={reset}
+                  className="mt-3 text-xs font-medium text-red-600 hover:text-red-800 underline"
+                >
+                  Try again
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* PREVIEW — show diff, ask for confirmation */}
+        {phase === 'preview' && preview && (
+          <div className="space-y-4">
+            {/* File badge */}
+            <div className="flex items-center space-x-2 text-sm text-gray-600 bg-gray-50 rounded-lg px-4 py-2.5 border border-gray-200">
+              <FileSpreadsheet className="w-4 h-4 text-indigo-500" />
+              <span className="font-medium">{file?.name}</span>
+              <span className="text-gray-400">·</span>
+              <span className="text-gray-400">{file ? formatBytes(file.size) : ''}</span>
+            </div>
+
+            {/* Warning */}
+            <div className="flex items-start space-x-3 bg-amber-50 border border-amber-200 rounded-xl p-4">
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-amber-800">Review before confirming</p>
+                <p className="text-xs text-amber-700 mt-0.5">{preview.warning || preview.message}</p>
+              </div>
+            </div>
+
+            {/* Stats */}
+            <PreviewStats roleId={roleId} preview={preview} />
+
+            {/* Expandable sample rows / diff details */}
+            {roleId === 4 ? (
+              <EmployeesDiffDetails preview={preview} show={showDetails} onToggle={() => setShowDetails(v => !v)} />
+            ) : (
+              <SampleRowsDetails preview={preview} show={showDetails} onToggle={() => setShowDetails(v => !v)} />
+            )}
+
+            {/* Actions */}
+            <div className="flex items-center space-x-3 pt-2">
+              <button
+                onClick={handleConfirm}
+                className="flex items-center space-x-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition-colors shadow-sm"
+              >
+                <CheckCircle className="w-4 h-4" />
+                <span>Confirm &amp; Execute Upload</span>
+              </button>
+              <button
+                onClick={reset}
+                className="px-5 py-2.5 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* CONFIRMING — executing */}
+        {phase === 'confirming' && (
+          <div className="flex flex-col items-center justify-center py-10 space-y-3">
+            <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+            <p className="text-sm font-semibold text-gray-700">Executing upload…</p>
+            <p className="text-xs text-gray-400">Writing data to database, please wait.</p>
+          </div>
+        )}
+
+        {/* DONE — success result */}
+        {phase === 'done' && result && (
+          <div className="space-y-4">
+            <div className="bg-green-50 border border-green-200 rounded-xl p-5 flex items-start space-x-3">
+              <CheckCircle className="w-6 h-6 text-green-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-green-800">Upload complete!</p>
+                <ResultSummary roleId={roleId} result={result} />
+              </div>
+            </div>
+
+            {result.errors && result.errors.length > 0 && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                <p className="text-sm font-semibold text-red-800 mb-2">Partial errors ({result.errors.length})</p>
+                <ul className="space-y-1">
+                  {result.errors.map((e: string, i: number) => (
+                    <li key={i} className="text-xs text-red-700 font-mono">{e}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <button
+              onClick={reset}
+              className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg transition-colors"
+            >
+              <Upload className="w-4 h-4" />
+              <span>Upload another file</span>
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Preview Stats Grid ────────────────────────────────────────────────────────
+function PreviewStats({ roleId, preview }: { roleId: number; preview: any }) {
+  const s = preview.stats;
+
+  if (roleId === 4) {
+    // Employee diff stats
+    const cards = [
+      { label: 'Total in File', value: s.totalInFile, icon: Users, color: 'bg-blue-50 text-blue-700 border-blue-200' },
+      { label: 'New Employees', value: s.newEmployees, icon: UserPlus, color: 'bg-green-50 text-green-700 border-green-200' },
+      { label: 'Updated', value: s.updatedEmployees, icon: UserCheck, color: 'bg-amber-50 text-amber-700 border-amber-200' },
+      { label: 'To Deactivate', value: s.deactivatedEmployees, icon: UserMinus, color: 'bg-red-50 text-red-700 border-red-200' },
+      { label: 'Unchanged', value: s.unchanged, icon: CheckCircle, color: 'bg-gray-50 text-gray-600 border-gray-200' },
+    ];
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {cards.map(c => (
+          <StatCard key={c.label} {...c} />
+        ))}
+      </div>
+    );
+  }
+
+  if (roleId === 1 || roleId === 2) {
+    // B2B stats
+    const cards = [
+      { label: 'Total Records', value: s.totalRecords, icon: BarChart2, color: 'bg-blue-50 text-blue-700 border-blue-200' },
+      { label: 'With RM', value: s.validRMRecords, icon: UserCheck, color: 'bg-green-50 text-green-700 border-green-200' },
+      { label: 'No RM', value: s.noRMRecords, icon: AlertTriangle, color: 'bg-amber-50 text-amber-700 border-amber-200' },
+      { label: roleId === 1 ? 'COB 100% (Cr.)' : 'COB 100% YTD', value: formatCr(roleId === 1 ? s.totalCOB100 : s.totalCOB100YTD), icon: TrendingUp, color: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+      { label: 'MF+SIF+MSCI (Cr.)', value: formatCr(s.totalMFSIFMSCI), icon: BarChart2, color: 'bg-purple-50 text-purple-700 border-purple-200' },
+    ];
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {cards.map(c => <StatCard key={c.label} {...c} />)}
+      </div>
+    );
+  }
+
+  if (roleId === 3) {
+    // B2C stats
+    const cards = [
+      { label: 'Total Advisors', value: s.totalAdvisors, icon: Users, color: 'bg-blue-50 text-blue-700 border-blue-200' },
+      { label: 'Net Inflow YTD (Cr.)', value: formatCr(s.totalNetInflowYTD), icon: TrendingUp, color: 'bg-green-50 text-green-700 border-green-200' },
+      { label: 'Current AUM (Cr.)', value: formatCr(s.totalCurrentAUM), icon: BarChart2, color: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+      { label: 'Assigned Leads', value: s.totalAssignedLeads, icon: UserCheck, color: 'bg-purple-50 text-purple-700 border-purple-200' },
+    ];
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {cards.map(c => <StatCard key={c.label} {...c} />)}
+      </div>
+    );
+  }
+
+  // Generic fallback
+  return (
+    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-700">
+      <pre className="text-xs">{JSON.stringify(s, null, 2)}</pre>
+    </div>
+  );
+}
+
+function StatCard({ label, value, icon: Icon, color }: { label: string; value: any; icon: any; color: string }) {
+  return (
+    <div className={`rounded-xl p-4 border ${color}`}>
+      <div className="flex items-center space-x-2 mb-2">
+        <Icon className="w-4 h-4 opacity-70" />
+        <p className="text-xs font-medium opacity-80">{label}</p>
+      </div>
+      <p className="text-xl font-bold">{value ?? 0}</p>
+    </div>
+  );
+}
+
+// ── Employee Diff Details ─────────────────────────────────────────────────────
+function EmployeesDiffDetails({ preview, show, onToggle }: { preview: any; show: boolean; onToggle: () => void }) {
+  const hasDetails = (preview.additions?.length || 0) + (preview.updates?.length || 0) + (preview.deactivations?.length || 0) > 0;
+  if (!hasDetails) return null;
+
+  return (
+    <div className="border border-gray-200 rounded-xl overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-5 py-3.5 bg-gray-50 hover:bg-gray-100 transition-colors text-sm font-medium text-gray-700"
+      >
+        <div className="flex items-center space-x-2">
+          <Eye className="w-4 h-4 text-gray-400" />
+          <span>View change details</span>
+          <span className="text-xs text-gray-400">
+            ({preview.additionsTotal ?? 0} new · {preview.updatesTotal ?? 0} updated · {preview.deactivationsTotal ?? 0} deactivated)
+          </span>
+        </div>
+        {show ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+      </button>
+
+      {show && (
+        <div className="divide-y divide-gray-100">
+          {/* New Employees */}
+          {preview.additions?.length > 0 && (
+            <div className="p-5">
+              <p className="text-xs font-semibold text-green-700 uppercase tracking-wider mb-3 flex items-center space-x-1.5">
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>New Employees ({preview.additionsTotal}){preview.additionsTotal > preview.additions.length ? ` — showing first ${preview.additions.length}` : ''}</span>
+              </p>
+              <div className="space-y-1.5">
+                {preview.additions.map((e: any, i: number) => (
+                  <div key={i} className="flex items-center space-x-3 bg-green-50 rounded-lg px-3 py-2 text-xs">
+                    <span className="font-mono font-semibold text-green-800 w-16 shrink-0">{e.employee_number}</span>
+                    <span className="font-medium text-green-900">{e.full_name}</span>
+                    <span className="text-green-600 ml-auto">{e.business_unit} · {e.job_title}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Updates */}
+          {preview.updates?.length > 0 && (
+            <div className="p-5">
+              <p className="text-xs font-semibold text-amber-700 uppercase tracking-wider mb-3 flex items-center space-x-1.5">
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>Updated ({preview.updatesTotal}){preview.updatesTotal > preview.updates.length ? ` — showing first ${preview.updates.length}` : ''}</span>
+              </p>
+              <div className="space-y-2">
+                {preview.updates.map((u: any, i: number) => (
+                  <div key={i} className="bg-amber-50 rounded-lg px-3 py-2 text-xs">
+                    <div className="flex items-center space-x-2 mb-1.5">
+                      <span className="font-mono font-semibold text-amber-800">{u.employee_number}</span>
+                      <span className="font-medium text-amber-900">{u.full_name}</span>
+                    </div>
+                    <ul className="space-y-0.5 pl-2">
+                      {u.changes.map((c: string, j: number) => (
+                        <li key={j} className="text-amber-700 font-mono">→ {c}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Deactivations */}
+          {preview.deactivations?.length > 0 && (
+            <div className="p-5">
+              <p className="text-xs font-semibold text-red-700 uppercase tracking-wider mb-3 flex items-center space-x-1.5">
+                <UserMinus className="w-3.5 h-3.5" />
+                <span>To Deactivate ({preview.deactivationsTotal}){preview.deactivationsTotal > preview.deactivations.length ? ` — showing first ${preview.deactivations.length}` : ''}</span>
+              </p>
+              <div className="space-y-1.5">
+                {preview.deactivations.map((d: any, i: number) => (
+                  <div key={i} className="flex items-center space-x-3 bg-red-50 rounded-lg px-3 py-2 text-xs">
+                    <span className="font-mono font-semibold text-red-800 w-16 shrink-0">{d.employee_number}</span>
+                    <span className="font-medium text-red-900">{d.full_name}</span>
+                    <span className="text-red-400 ml-auto text-xs italic">Will be set to Inactive</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Sample Rows Details (B2B / B2C) ───────────────────────────────────────────
+function SampleRowsDetails({ preview, show, onToggle }: { preview: any; show: boolean; onToggle: () => void }) {
+  const hasSummary = preview.teamSummary || preview.zoneSummary;
+  const hasSamples = preview.sampleRows?.length > 0;
+  if (!hasSummary && !hasSamples) return null;
+
+  return (
+    <div className="border border-gray-200 rounded-xl overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-5 py-3.5 bg-gray-50 hover:bg-gray-100 transition-colors text-sm font-medium text-gray-700"
+      >
+        <div className="flex items-center space-x-2">
+          <Eye className="w-4 h-4 text-gray-400" />
+          <span>View breakdown &amp; sample rows</span>
+        </div>
+        {show ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+      </button>
+
+      {show && (
+        <div className="p-5 space-y-5">
+          {/* Summary breakdown */}
+          {hasSummary && (
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+                {preview.teamSummary ? 'By Team' : 'By Zone'}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(preview.teamSummary || preview.zoneSummary).map(([key, count]: [string, any]) => (
+                  <span key={key} className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-2.5 py-1 rounded-full font-medium">
+                    {key}: <strong>{count}</strong>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Sample rows */}
+          {hasSamples && (
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+                Sample Records (first {preview.sampleRows.length})
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border border-gray-200 rounded-lg overflow-hidden">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      {Object.keys(preview.sampleRows[0]).map(k => (
+                        <th key={k} className="text-left px-3 py-2 text-gray-500 font-semibold whitespace-nowrap">{k}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {preview.sampleRows.map((row: any, i: number) => (
+                      <tr key={i} className="hover:bg-gray-50">
+                        {Object.values(row).map((v: any, j: number) => (
+                          <td key={j} className="px-3 py-2 text-gray-700 font-mono whitespace-nowrap">{String(v ?? '—')}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Result Summary ────────────────────────────────────────────────────────────
+function ResultSummary({ roleId, result }: { roleId: number; result: any }) {
+  if (roleId === 4) {
+    const r = result.result;
+    return (
+      <div className="mt-2 text-sm text-green-700 space-y-0.5">
+        <p>✓ <strong>{r.added}</strong> new employees added</p>
+        <p>✓ <strong>{r.updated}</strong> employees updated</p>
+        <p>✓ <strong>{r.deactivated}</strong> employees deactivated</p>
+      </div>
+    );
+  }
+  const r = result.result;
+  return (
+    <p className="mt-1 text-sm text-green-700">
+      <strong>{r.inserted}</strong> records inserted from <em>{r.filename}</em>
+    </p>
+  );
+}
+
+// ── Coming Soon Card ──────────────────────────────────────────────────────────
+function ComingSoonCard({ roleId }: { roleId: number }) {
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-semibold text-gray-900">{ROLE_LABELS[roleId]}</h3>
+          <p className="text-xs text-gray-400 mt-1">Role ID: {roleId}</p>
+        </div>
+        <span className="px-3 py-1.5 bg-yellow-50 text-yellow-700 border border-yellow-200 text-xs font-medium rounded-full">
+          Coming Soon
+        </span>
+      </div>
+      <div className="mt-4 bg-gray-50 rounded-lg p-4 border border-dashed border-gray-300 text-center text-sm text-gray-400">
+        Upload interface for this feature will be built here
+      </div>
+    </div>
+  );
+}
+
+// ── Coming Soon Section ───────────────────────────────────────────────────────
+function ComingSoonSection({ title, description }: { title: string; description: string }) {
+  return (
+    <div>
+      <h2 className="text-2xl font-bold text-gray-900 mb-1">{title}</h2>
+      <p className="text-sm text-gray-500 mb-6">{description}</p>
+      <div className="bg-white border border-dashed border-gray-300 rounded-xl p-16 text-center">
+        <Trophy className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+        <p className="text-gray-500 font-medium">Coming Soon</p>
+        <p className="text-gray-400 text-sm mt-1">This feature is under development.</p>
+      </div>
+    </div>
+  );
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatCr(val: any) {
+  const n = parseFloat(val);
+  if (isNaN(n)) return '0';
+  return n.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+}
+
+function getEndpointLabel(endpoint: string) {
+  const parts = endpoint.split('/');
+  return parts[parts.length - 1].toUpperCase();
 }
 
 // ── User Management Section ───────────────────────────────────────────────────
@@ -573,37 +1231,6 @@ function ImpersonateSection({ showToast, router }: { showToast: Function; router
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
           <span>{loading ? 'Switching session...' : 'Sign in as this user'}</span>
         </button>
-      </div>
-    </div>
-  );
-}
-
-// ── Placeholder Section ───────────────────────────────────────────────────────
-function PlaceholderSection({ title, roles, adminRoles }: { title: string; roles: number[]; adminRoles: number[] }) {
-  const allowedRoles = roles.filter(r => adminRoles?.includes(r));
-
-  return (
-    <div>
-      <h2 className="text-2xl font-bold text-gray-900 mb-2">{title}</h2>
-      <p className="text-sm text-gray-500 mb-6">Manage data uploads and edits for this section.</p>
-
-      <div className="grid grid-cols-1 gap-4">
-        {allowedRoles.map(roleId => (
-          <div key={roleId} className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-semibold text-gray-900">{ROLE_LABELS[roleId]}</h3>
-                <p className="text-xs text-gray-400 mt-1">Role ID: {roleId}</p>
-              </div>
-              <span className="px-3 py-1.5 bg-yellow-50 text-yellow-700 border border-yellow-200 text-xs font-medium rounded-full">
-                Coming Soon
-              </span>
-            </div>
-            <div className="mt-4 bg-gray-50 rounded-lg p-4 border border-dashed border-gray-300 text-center text-sm text-gray-400">
-              Upload interface for this feature will be built here
-            </div>
-          </div>
-        ))}
       </div>
     </div>
   );
