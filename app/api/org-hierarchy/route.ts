@@ -9,19 +9,40 @@ export async function GET(request: Request) {
     const employeeId = searchParams.get('employeeId');
 
     // Get all employees with their reporting structure
-    // Using range to bypass PostgREST's default 1000-row limit
-    const { data: employees, error: empError, count: totalCount } = await supabaseAdmin
-      .from('employees')
-      .select('*', { count: 'exact' })
-      .order('employee_number')
-      .range(0, 9999);
+    // Paginate to bypass PostgREST's server-side max_rows limit (default 1000)
+    // DB has 1167+ employees so we must fetch in batches
+    const PAGE_SIZE = 1000;
+    let allEmployees: any[] = [];
+    let totalCount: number | null = null;
+    let page = 0;
 
-    if (empError) {
-      return NextResponse.json({
-        error: 'Failed to fetch employees',
-        details: empError,
-      }, { status: 500 });
+    while (true) {
+      const from = page * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+
+      const { data: batch, error: batchError, count } = await supabaseAdmin
+        .from('employees')
+        .select('*', { count: page === 0 ? 'exact' : 'planned' })
+        .order('employee_number')
+        .range(from, to);
+
+      if (batchError) {
+        return NextResponse.json({
+          error: 'Failed to fetch employees',
+          details: batchError,
+        }, { status: 500 });
+      }
+
+      if (page === 0 && count !== null) totalCount = count;
+      if (batch && batch.length > 0) allEmployees = allEmployees.concat(batch);
+
+      // Stop if we got fewer rows than PAGE_SIZE (last page) or no data
+      if (!batch || batch.length < PAGE_SIZE) break;
+
+      page++;
     }
+
+    const employees = allEmployees;
 
     // Get B2B sales data
     const { data: b2bCurrent } = await supabaseAdmin
