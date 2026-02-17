@@ -48,23 +48,48 @@ export default function SetPasswordPage() {
 
   const strength = getPasswordStrength(password);
 
-  // On mount, verify we have an active Supabase Auth session (set by the callback route)
+  // On mount, wait for Supabase Auth session.
+  // Magic links deliver the session via URL hash (#access_token=...) which is processed
+  // asynchronously by the Supabase client. We listen to onAuthStateChange to catch it.
   useEffect(() => {
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+    let settled = false;
 
-      if (!session?.user?.email) {
-        // No session — likely accessed directly without going through the email link
+    // First try: check if session already exists (e.g. PKCE code was already exchanged)
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (settled) return;
+      if (session?.user?.email) {
+        settled = true;
+        setUserEmail(session.user.email);
+        setState('form');
+      }
+    });
+
+    // Second: listen for auth state changes (catches magic link hash fragment processing)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (settled) return;
+      if (
+        (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'PASSWORD_RECOVERY') &&
+        session?.user?.email
+      ) {
+        settled = true;
+        setUserEmail(session.user.email);
+        setState('form');
+      }
+    });
+
+    // Timeout: if no session after 8 seconds, show error
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true;
         setState('error');
         setError('Your verification link has expired or is invalid. Please request a new one.');
-        return;
       }
+    }, 8000);
 
-      setUserEmail(session.user.email);
-      setState('form');
+    return () => {
+      subscription.unsubscribe();
+      clearTimeout(timeout);
     };
-
-    checkSession();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {

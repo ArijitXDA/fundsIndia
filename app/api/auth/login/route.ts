@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
-import bcrypt from 'bcryptjs';
+import { supabaseAdmin, supabaseAnon } from '@/lib/supabase';
 
 // Mark this route as dynamic
 export const dynamic = 'force-dynamic';
@@ -8,49 +7,47 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: NextRequest) {
   try {
     const { email, password } = await request.json();
-    console.log('[LOGIN] Attempt for email:', email);
 
     // Validate email domain
-    if (!email.endsWith('@fundsindia.com')) {
-      console.log('[LOGIN] Invalid domain:', email);
+    if (!email || !email.endsWith('@fundsindia.com')) {
       return NextResponse.json(
         { error: 'Only @fundsindia.com email addresses are allowed' },
         { status: 400 }
       );
     }
 
-    // Check if user exists in database (simplified query without join)
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Authenticate via Supabase Auth (anon client so it uses the proper auth pipeline)
+    const { data: authData, error: authError } = await supabaseAnon.auth.signInWithPassword({
+      email: normalizedEmail,
+      password,
+    });
+
+    if (authError || !authData.user) {
+      return NextResponse.json(
+        { error: 'Invalid email or password' },
+        { status: 401 }
+      );
+    }
+
+    // Fetch our custom user row (for role, employee link, etc.)
     const { data: user, error: userError } = await supabaseAdmin
       .from('users')
       .select('*')
-      .eq('email', email)
+      .eq('email', normalizedEmail)
       .single();
 
     if (userError || !user) {
-      console.error('[LOGIN] User not found:', email, userError);
+      // User authenticated with Supabase but no row in our users table yet
+      // This can happen if they signed up via OTP but never completed set-password
       return NextResponse.json(
-        { error: 'Invalid email or password' },
-        { status: 401 }
+        { error: 'Account setup incomplete. Please use the sign-up link sent to your email.' },
+        { status: 403 }
       );
     }
 
-    console.log('[LOGIN] User found:', email, 'Role:', user.role);
-
-    // Verify password
-    const passwordMatch = await bcrypt.compare(password, user.password_hash);
-    console.log('[LOGIN] Password match:', passwordMatch);
-
-    if (!passwordMatch) {
-      console.error('[LOGIN] Password mismatch for:', email);
-      return NextResponse.json(
-        { error: 'Invalid email or password' },
-        { status: 401 }
-      );
-    }
-
-    console.log('[LOGIN] Authentication successful for:', email);
-
-    // Fetch employee details separately after password verification
+    // Fetch employee details
     const { data: employee } = await supabaseAdmin
       .from('employees')
       .select('*')
@@ -64,22 +61,26 @@ export async function POST(request: NextRequest) {
       .eq('id', user.id);
 
     // Log activity
-    await supabaseAdmin
-      .from('activity_logs')
-      .insert({
-        user_id: user.id,
-        employee_id: user.employee_id,
-        action_type: 'login',
-        action_details: { success: true },
-      });
+    try {
+      await supabaseAdmin
+        .from('activity_logs')
+        .insert({
+          user_id: user.id,
+          employee_id: user.employee_id,
+          action_type: 'login',
+          action_details: { success: true, method: 'supabase_auth' },
+        });
+    } catch (_) {
+      // Non-fatal
+    }
 
-    // Create session token (simplified - in production use proper JWT)
+    // Issue our custom session cookie (dashboard reads this via /api/auth/me)
     const sessionData = {
       userId: user.id,
       email: user.email,
       employeeId: user.employee_id,
       role: user.role,
-      isFirstLogin: user.is_first_login,
+      isFirstLogin: false,
     };
 
     const response = NextResponse.json({
@@ -87,12 +88,11 @@ export async function POST(request: NextRequest) {
       user: {
         email: user.email,
         role: user.role,
-        isFirstLogin: user.is_first_login,
-        employee: employee,
+        isFirstLogin: false,
+        employee,
       },
     });
 
-    // Set HTTP-only cookie for session
     response.cookies.set('session', JSON.stringify(sessionData), {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
