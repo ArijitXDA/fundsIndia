@@ -31,13 +31,26 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Check if this user has an active admin role
+    const { data: adminRole } = await supabaseAdmin
+      .from('admin_roles')
+      .select('tier, vertical, roles, can_impersonate, can_assign_admins')
+      .eq('email', user.email)
+      .eq('is_active', true)
+      .single();
+
+    // Check if currently impersonating (impersonatedBy field in session cookie)
+    const impersonatedBy = sessionData.impersonatedBy || null;
+
     return NextResponse.json({
       user: {
         email: user.email,
         role: user.role,
         isFirstLogin: user.is_first_login,
         employee: user.employee,
+        impersonatedBy,
       },
+      adminRole: adminRole ?? null,
     });
   } catch (error) {
     console.error('Session check error:', error);

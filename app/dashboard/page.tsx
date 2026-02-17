@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { TrendingUp, Award, Target, BarChart3, Trophy, Medal, Crown, Building2, Users, Network, KeyRound, CheckCircle } from 'lucide-react';
+import { TrendingUp, Award, Target, BarChart3, Trophy, Medal, Crown, Building2, Users, Network, KeyRound, CheckCircle, Shield, LogOut } from 'lucide-react';
 import OrgChartModal from '@/components/OrgChartModal';
 
 interface SalesBreakdown {
@@ -49,6 +49,7 @@ type TabType = 'B2B' | 'B2C' | 'PW';
 export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
+  const [adminRole, setAdminRole] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [salesData, setSalesData] = useState<any>(null);
   const [b2cData, setB2cData] = useState<any>(null);
@@ -67,6 +68,7 @@ export default function DashboardPage() {
         }
         const data = await response.json();
         setUser(data.user);
+        setAdminRole(data.adminRole ?? null);
 
         // Set default tab based on user's business unit
         if (data.user.employee?.business_unit === 'B2C') {
@@ -106,6 +108,12 @@ export default function DashboardPage() {
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
     router.push('/login');
+  };
+
+  const handleExitImpersonation = async () => {
+    await fetch('/api/admin/exit-impersonation', { method: 'POST' });
+    router.push('/dashboard');
+    router.refresh();
   };
 
   const handleChangePassword = async () => {
@@ -178,6 +186,25 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+      {/* Impersonation Banner */}
+      {user?.impersonatedBy && (
+        <div className="bg-amber-500 text-white px-4 py-2 flex items-center justify-between sticky top-0 z-[60]">
+          <div className="flex items-center space-x-2">
+            <Shield className="w-4 h-4" />
+            <span className="text-sm font-semibold">
+              Dev Admin View — Viewing as <strong>{user.employee?.full_name} ({user.email})</strong>
+            </span>
+          </div>
+          <button
+            onClick={handleExitImpersonation}
+            className="flex items-center space-x-1.5 bg-white/20 hover:bg-white/30 px-3 py-1 rounded-lg text-sm font-medium transition-colors"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Exit &amp; Return to Admin</span>
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white/80 backdrop-blur-lg shadow-sm border-b border-gray-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
@@ -198,6 +225,16 @@ export default function DashboardPage() {
                 <p className="text-sm font-semibold text-gray-900">{user?.employee?.full_name}</p>
                 <p className="text-xs text-gray-500">{user?.employee?.employee_number} • {user?.role?.toUpperCase()}</p>
               </div>
+              {adminRole && (
+                <button
+                  onClick={() => router.push('/admin')}
+                  className="px-4 py-2.5 text-sm font-medium text-white bg-gradient-to-r from-rose-500 to-orange-500 hover:from-rose-600 hover:to-orange-600 rounded-lg transition-all duration-200 flex items-center space-x-2 shadow-md"
+                  title={`Admin Panel (${adminRole.tier} admin)`}
+                >
+                  <Shield className="w-4 h-4" />
+                  <span>Admin</span>
+                </button>
+              )}
               <button
                 onClick={() => setIsOrgChartOpen(true)}
                 className="px-4 py-2.5 text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-all duration-200 flex items-center space-x-2 border border-indigo-200"
