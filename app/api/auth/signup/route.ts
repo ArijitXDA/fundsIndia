@@ -59,9 +59,12 @@ export async function POST(request: NextRequest) {
     });
 
     if (otpError) {
-      console.error('[SIGNUP] OTP error:', otpError);
+      console.error('[SIGNUP] OTP error:', otpError.message, otpError.status, otpError);
       return NextResponse.json(
-        { error: 'Failed to send verification email. Please try again.' },
+        {
+          error: 'Failed to send verification email. Please try again.',
+          _debug: otpError.message,
+        },
         { status: 500 }
       );
     }
@@ -73,7 +76,10 @@ export async function POST(request: NextRequest) {
       isExistingUser: !!existingUser,
     });
   } catch (error: any) {
-    console.error('[SIGNUP] Error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    console.error('[SIGNUP] Unexpected error:', error?.message || error);
+    return NextResponse.json(
+      { error: 'Internal server error', _debug: error?.message },
+      { status: 500 }
+    );
   }
 }
