@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { TrendingUp, Award, Target, BarChart3, Trophy, Medal, Crown, Building2, Users, Network } from 'lucide-react';
+import { TrendingUp, Award, Target, BarChart3, Trophy, Medal, Crown, Building2, Users, Network, KeyRound, CheckCircle } from 'lucide-react';
 import OrgChartModal from '@/components/OrgChartModal';
 
 interface SalesBreakdown {
@@ -55,6 +55,7 @@ export default function DashboardPage() {
   const [myPerformance, setMyPerformance] = useState<EmployeeSales | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('B2B');
   const [isOrgChartOpen, setIsOrgChartOpen] = useState(false);
+  const [passwordResetToast, setPasswordResetToast] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -105,6 +106,27 @@ export default function DashboardPage() {
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
     router.push('/login');
+  };
+
+  const handleChangePassword = async () => {
+    if (!user?.email) return;
+    setPasswordResetToast('sending');
+    try {
+      const response = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email }),
+      });
+      if (response.ok) {
+        setPasswordResetToast('sent');
+      } else {
+        setPasswordResetToast('error');
+      }
+    } catch {
+      setPasswordResetToast('error');
+    }
+    // Reset toast after 5 seconds
+    setTimeout(() => setPasswordResetToast('idle'), 5000);
   };
 
   if (loading) {
@@ -182,6 +204,17 @@ export default function DashboardPage() {
               >
                 <Network className="w-4 h-4" />
                 <span>Org View</span>
+              </button>
+              <button
+                onClick={handleChangePassword}
+                disabled={passwordResetToast === 'sending'}
+                className="px-4 py-2.5 text-sm font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-lg transition-all duration-200 flex items-center space-x-2 border border-gray-200 disabled:opacity-60 disabled:cursor-not-allowed"
+                title="Send a password reset link to your email"
+              >
+                <KeyRound className="w-4 h-4" />
+                <span>
+                  {passwordResetToast === 'sending' ? 'Sending...' : 'Change Password'}
+                </span>
               </button>
               <button
                 onClick={handleLogout}
@@ -544,6 +577,44 @@ export default function DashboardPage() {
         onClose={() => setIsOrgChartOpen(false)}
         currentEmployeeNumber={user?.employee?.employee_number || ''}
       />
+
+      {/* Change Password Toast Notification */}
+      {passwordResetToast !== 'idle' && (
+        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-4 duration-300">
+          <div className={`flex items-start space-x-3 px-5 py-4 rounded-xl shadow-xl border max-w-sm ${
+            passwordResetToast === 'sent'
+              ? 'bg-green-50 border-green-200 text-green-800'
+              : passwordResetToast === 'error'
+              ? 'bg-red-50 border-red-200 text-red-800'
+              : 'bg-white border-gray-200 text-gray-700'
+          }`}>
+            {passwordResetToast === 'sending' && (
+              <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin flex-shrink-0 mt-0.5" />
+            )}
+            {passwordResetToast === 'sent' && (
+              <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+            )}
+            {passwordResetToast === 'error' && (
+              <span className="text-red-500 text-lg leading-none flex-shrink-0">!</span>
+            )}
+            <div>
+              <p className="font-semibold text-sm">
+                {passwordResetToast === 'sending' && 'Sending reset link...'}
+                {passwordResetToast === 'sent' && 'Password reset email sent!'}
+                {passwordResetToast === 'error' && 'Failed to send reset email'}
+              </p>
+              {passwordResetToast === 'sent' && (
+                <p className="text-xs mt-0.5 text-green-700">
+                  Check your inbox at {user?.email}
+                </p>
+              )}
+              {passwordResetToast === 'error' && (
+                <p className="text-xs mt-0.5 text-red-700">Please try again or contact support.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
