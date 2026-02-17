@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Lock, Eye, EyeOff, CheckCircle, AlertCircle, Loader2, ShieldCheck } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 type State = 'loading' | 'form' | 'submitting' | 'success' | 'error';
 
@@ -47,6 +47,18 @@ export default function SetPasswordPage() {
   const [userEmail, setUserEmail] = useState('');
   const [debugLog, setDebugLog] = useState<string[]>([]);
 
+  // Create Supabase client lazily (ref) — avoids SSR crash from module-level createBrowserClient
+  const supabaseRef = useRef<SupabaseClient | null>(null);
+  const getSupabase = () => {
+    if (!supabaseRef.current) {
+      supabaseRef.current = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      );
+    }
+    return supabaseRef.current;
+  };
+
   const strength = getPasswordStrength(password);
 
   const addDebug = (msg: string) => {
@@ -86,7 +98,7 @@ export default function SetPasswordPage() {
 
       if (accessToken && refreshToken) {
         addDebug('calling setSession...');
-        const { data, error: sessionError } = await supabase.auth.setSession({
+        const { data, error: sessionError } = await getSupabase().auth.setSession({
           access_token: accessToken,
           refresh_token: refreshToken,
         });
@@ -108,7 +120,7 @@ export default function SetPasswordPage() {
       addDebug(`token_hash present: ${!!token_hash}, type: ${type}`);
 
       if (token_hash && type) {
-        const { data, error: verifyError } = await supabase.auth.verifyOtp({
+        const { data, error: verifyError } = await getSupabase().auth.verifyOtp({
           token_hash,
           type: type as any,
         });
@@ -141,7 +153,7 @@ export default function SetPasswordPage() {
       }
 
       // 1. Try existing session first
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await getSupabase().auth.getSession();
       addDebug(`existing session: ${session?.user?.email ?? 'none'}`);
       if (session?.user?.email) {
         resolve(session.user.email);
@@ -158,7 +170,7 @@ export default function SetPasswordPage() {
 
       // 4. onAuthStateChange fallback
       addDebug('waiting for onAuthStateChange...');
-      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      const { data: { subscription } } = getSupabase().auth.onAuthStateChange(async (event, session) => {
         addDebug(`onAuthStateChange: event=${event}, email=${session?.user?.email}`);
         if (settled) return;
         if (
@@ -204,7 +216,7 @@ export default function SetPasswordPage() {
 
     try {
       // 1. Update password in Supabase Auth (user is already authenticated via session)
-      const { data: updateData, error: updateError } = await supabase.auth.updateUser({
+      const { data: updateData, error: updateError } = await getSupabase().auth.updateUser({
         password,
       });
 
