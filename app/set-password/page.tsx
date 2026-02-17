@@ -45,8 +45,14 @@ export default function SetPasswordPage() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [error, setError] = useState('');
   const [userEmail, setUserEmail] = useState('');
+  const [debugLog, setDebugLog] = useState<string[]>([]);
 
   const strength = getPasswordStrength(password);
+
+  const addDebug = (msg: string) => {
+    console.log('[SET-PASSWORD]', msg);
+    setDebugLog((prev) => [...prev, msg]);
+  };
 
   useEffect(() => {
     let settled = false;
@@ -54,6 +60,7 @@ export default function SetPasswordPage() {
     const resolve = (email: string) => {
       if (settled) return;
       settled = true;
+      addDebug(`✓ Session resolved for: ${email}`);
       setUserEmail(email);
       setState('form');
     };
@@ -61,6 +68,7 @@ export default function SetPasswordPage() {
     const fail = (msg: string) => {
       if (settled) return;
       settled = true;
+      addDebug(`✗ Failed: ${msg}`);
       setError(msg);
       setState('error');
     };
@@ -68,20 +76,22 @@ export default function SetPasswordPage() {
     // Helper: parse the #access_token hash fragment and set session manually
     const tryHashFragment = async () => {
       const hash = window.location.hash;
+      addDebug(`hash present: ${!!hash}, length: ${hash.length}`);
       if (!hash) return false;
 
-      // Parse hash params: #access_token=...&type=signup&...
       const params = new URLSearchParams(hash.substring(1));
       const accessToken = params.get('access_token');
       const refreshToken = params.get('refresh_token');
+      addDebug(`access_token present: ${!!accessToken}, refresh_token present: ${!!refreshToken}`);
 
       if (accessToken && refreshToken) {
+        addDebug('calling setSession...');
         const { data, error: sessionError } = await supabase.auth.setSession({
           access_token: accessToken,
           refresh_token: refreshToken,
         });
+        addDebug(`setSession result: error=${sessionError?.message}, email=${data.session?.user?.email}`);
         if (sessionError || !data.session?.user?.email) return false;
-        // Clear the hash from the URL so tokens aren't visible
         window.history.replaceState(null, '', window.location.pathname);
         resolve(data.session.user.email);
         return true;
@@ -95,12 +105,14 @@ export default function SetPasswordPage() {
       const params = new URLSearchParams(window.location.search);
       const token_hash = params.get('token_hash');
       const type = params.get('type');
+      addDebug(`token_hash present: ${!!token_hash}, type: ${type}`);
 
       if (token_hash && type) {
         const { data, error: verifyError } = await supabase.auth.verifyOtp({
           token_hash,
           type: type as any,
         });
+        addDebug(`verifyOtp result: error=${verifyError?.message}, email=${data.session?.user?.email}`);
         if (verifyError || !data.session?.user?.email) return false;
         resolve(data.session.user.email);
         return true;
@@ -110,14 +122,17 @@ export default function SetPasswordPage() {
     };
 
     const init = async () => {
-      // 1. Try existing session first (e.g. PKCE flow already exchanged)
+      addDebug('init started');
+
+      // 1. Try existing session first
       const { data: { session } } = await supabase.auth.getSession();
+      addDebug(`existing session: ${session?.user?.email ?? 'none'}`);
       if (session?.user?.email) {
         resolve(session.user.email);
         return;
       }
 
-      // 2. Try parsing hash fragment directly (#access_token=...)
+      // 2. Try hash fragment
       const handledHash = await tryHashFragment();
       if (handledHash) return;
 
@@ -125,9 +140,10 @@ export default function SetPasswordPage() {
       const handledToken = await tryTokenHash();
       if (handledToken) return;
 
-      // 4. Fall back to onAuthStateChange listener — Supabase JS processes
-      //    the hash asynchronously in some cases
+      // 4. onAuthStateChange fallback
+      addDebug('waiting for onAuthStateChange...');
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+        addDebug(`onAuthStateChange: event=${event}, email=${session?.user?.email}`);
         if (settled) return;
         if (
           (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'PASSWORD_RECOVERY') &&
@@ -240,6 +256,13 @@ export default function SetPasswordPage() {
           <div className="flex flex-col items-center justify-center py-8 space-y-4">
             <Loader2 className="w-10 h-10 text-indigo-600 animate-spin" />
             <p className="text-sm text-gray-500">Verifying your session...</p>
+            {debugLog.length > 0 && (
+              <div className="w-full bg-gray-900 rounded p-3 text-left">
+                {debugLog.map((line, i) => (
+                  <p key={i} className="text-xs text-green-400 font-mono">{line}</p>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
