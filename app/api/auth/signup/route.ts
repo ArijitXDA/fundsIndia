@@ -70,6 +70,8 @@ export async function POST(request: NextRequest) {
           error: isRateLimit
             ? 'Too many verification emails sent recently. Please wait a few minutes and try again.'
             : 'Failed to send verification email. Please try again.',
+          _debug: otpError.message,
+          _status: otpError.status,
         },
         { status: isRateLimit ? 429 : 500 }
       );
