@@ -9,10 +9,12 @@ export async function GET(request: Request) {
     const employeeId = searchParams.get('employeeId');
 
     // Get all employees with their reporting structure
-    const { data: employees, error: empError } = await supabaseAdmin
+    // Using range to bypass PostgREST's default 1000-row limit
+    const { data: employees, error: empError, count: totalCount } = await supabaseAdmin
       .from('employees')
-      .select('*')
-      .order('employee_number');
+      .select('*', { count: 'exact' })
+      .order('employee_number')
+      .range(0, 9999);
 
     if (empError) {
       return NextResponse.json({
@@ -152,6 +154,7 @@ export async function GET(request: Request) {
       requestedEmployeeId: employeeId,
       totalRawEmployees: employees?.length || 0,
       totalEnrichedEmployees: enrichedWithTeamYTD?.length || 0,
+      totalCountInDB: totalCount,
       rawEmployeeExists: employees?.some(e => e.employee_number === 'W2225A'),
       enrichedEmployeeExists: enrichedWithTeamYTD?.some(e => e.employeeNumber === 'W2225A'),
       currentEmployeeFound: !!currentEmployee,
@@ -166,6 +169,12 @@ export async function GET(request: Request) {
         e.full_name?.toLowerCase().includes('akshay') &&
         e.full_name?.toLowerCase().includes('sapru')
       ).map(e => ({ empNo: e.employee_number, name: e.full_name, manager: e.reporting_manager_emp_number })),
+      // List all raw direct reports of W2225A
+      rawDirectReports: employees?.filter(e => e.reporting_manager_emp_number === 'W2225A')
+        .map(e => ({ empNo: e.employee_number, name: e.full_name })),
+      // List all enriched direct reports of W2225A
+      enrichedDirectReports: enrichedWithTeamYTD?.filter(e => e.reportingManagerEmpNo === 'W2225A')
+        .map(e => ({ empNo: e.employeeNumber, name: e.name })),
     } : undefined;
 
     return NextResponse.json({
