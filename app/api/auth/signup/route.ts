@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { supabaseAdmin, supabaseAnon } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,19 +45,21 @@ export async function POST(request: NextRequest) {
       .eq('email', normalizedEmail)
       .single();
 
-    // Use magiclink for all cases — works for both new and existing Supabase Auth users,
-    // does not require a password field, and redirects to /set-password where user sets their password.
+    // Use signInWithOtp on the anon client — this actually triggers Supabase's email pipeline.
+    // The admin/service role client bypasses email sending; anon client sends the OTP email correctly.
     const siteUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://funds-india-8134.vercel.app';
     const redirectTo = `${siteUrl}/auth/callback?next=/set-password`;
 
-    const { error: linkError } = await supabaseAdmin.auth.admin.generateLink({
-      type: 'magiclink',
+    const { error: otpError } = await supabaseAnon.auth.signInWithOtp({
       email: normalizedEmail,
-      options: { redirectTo },
+      options: {
+        emailRedirectTo: redirectTo,
+        shouldCreateUser: true, // create Supabase Auth user if not already exists
+      },
     });
 
-    if (linkError) {
-      console.error('[SIGNUP] Generate link error:', linkError);
+    if (otpError) {
+      console.error('[SIGNUP] OTP error:', otpError);
       return NextResponse.json(
         { error: 'Failed to send verification email. Please try again.' },
         { status: 500 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { supabaseAnon } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,9 +24,10 @@ export async function POST(request: NextRequest) {
     const siteUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://funds-india-8134.vercel.app';
     const redirectTo = `${siteUrl}/auth/callback?next=/set-password`;
 
-    // Send password reset email via Supabase Auth
-    // We always return success to avoid email enumeration attacks
-    await supabaseAdmin.auth.resetPasswordForEmail(normalizedEmail, {
+    // Send password reset email via Supabase Auth using the anon client.
+    // The service role client bypasses the email pipeline — anon client actually sends the email.
+    // We always return success to avoid email enumeration attacks.
+    await supabaseAnon.auth.resetPasswordForEmail(normalizedEmail, {
       redirectTo,
     });
 
