@@ -124,6 +124,22 @@ export default function SetPasswordPage() {
     const init = async () => {
       addDebug('init started');
 
+      // 0. Check for error in hash fragment first (e.g. #error=access_denied&error_code=otp_expired)
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const hashError = hashParams.get('error');
+      const hashErrorCode = hashParams.get('error_code');
+      const hashErrorDesc = hashParams.get('error_description');
+      if (hashError) {
+        addDebug(`hash error: ${hashError} / ${hashErrorCode} / ${hashErrorDesc}`);
+        const isExpired = hashErrorCode === 'otp_expired' || hashErrorDesc?.toLowerCase().includes('expired');
+        window.history.replaceState(null, '', window.location.pathname);
+        fail(isExpired
+          ? 'This verification link has expired. Please request a new one.'
+          : `Verification failed: ${hashErrorDesc?.replace(/\+/g, ' ') ?? hashError}`
+        );
+        return;
+      }
+
       // 1. Try existing session first
       const { data: { session } } = await supabase.auth.getSession();
       addDebug(`existing session: ${session?.user?.email ?? 'none'}`);
