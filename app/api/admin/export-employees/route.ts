@@ -61,13 +61,13 @@ export async function GET(request: NextRequest) {
       ? null
       : (VERTICAL_BU_MAP[adminRole.vertical] ?? []);
 
-    // 4. Fetch ALL active employees (needed for manager name lookups)
+    // 4. Fetch ALL employees (status 'Working' = active in this DB — not 'Inactive')
     const { data: allEmployees, error: empError } = await supabaseAdmin
       .from('employees')
       .select(
         'employee_number, full_name, work_email, business_unit, job_title, department, sub_department, location, reporting_manager_emp_number, employment_status, date_joined'
       )
-      .eq('employment_status', 'Active');
+      .neq('employment_status', 'Inactive');
 
     if (empError) {
       return NextResponse.json(
@@ -147,11 +147,13 @@ export async function GET(request: NextRequest) {
       e.ytdPrev_total += parseFloat(row['Total Net Sales (COB 100%)'] || 0) || 0;
     });
 
-    // ── B2C: by advisor name (lowercase) ────────────────────────────────────
+    // ── B2C: by advisor field (lowercase) ────────────────────────────────────
+    // The 'advisor' column stores email addresses (e.g. venkatsri.ss@fundsindia.com)
+    // so we match against the employee's work_email
     const b2cMap = new Map<string, any>();
     (b2cRows || []).forEach(row => {
-      const name = String(row['advisor'] || '').trim().toLowerCase();
-      if (name) b2cMap.set(name, row);
+      const advisor = String(row['advisor'] || '').trim().toLowerCase();
+      if (advisor) b2cMap.set(advisor, row);
     });
 
     // ── Determine which employees to include in the report ───────────────────
@@ -243,12 +245,12 @@ export async function GET(request: NextRequest) {
     ];
 
     const csvRows: string[][] = scopedEmployees.map(emp => {
-      const bu      = (emp.business_unit || '').trim();
-      const vertical = bu === 'Private Wealth' ? 'PW' : bu;
-      const empNum   = emp.employee_number || '';
-      const nameLower = (emp.full_name || '').trim().toLowerCase();
-      const mgrNum   = emp.reporting_manager_emp_number || '';
-      const mgrName  = mgrNum ? (empNameMap.get(mgrNum) || '') : '';
+      const bu        = (emp.business_unit || '').trim();
+      const vertical  = bu === 'Private Wealth' ? 'PW' : bu;
+      const empNum    = emp.employee_number || '';
+      const emailKey  = (emp.work_email || '').trim().toLowerCase();
+      const mgrNum    = emp.reporting_manager_emp_number || '';
+      const mgrName   = mgrNum ? (empNameMap.get(mgrNum) || '') : '';
 
       // Identity columns
       const identity = [
@@ -265,8 +267,9 @@ export async function GET(request: NextRequest) {
         emp.date_joined || '',
       ];
 
-      // B2B columns
-      const b2b = b2bMap.get(empNum);
+      // B2B columns — try with and without leading 'W' prefix to handle both formats
+      const empNumW = empNum.startsWith('W') ? empNum : `W${empNum}`;
+      const b2b = b2bMap.get(empNumW) || b2bMap.get(empNum);
       const ytd_mf    = b2b ? b2b.mtd_mf    + b2b.ytdPrev_mf    : 0;
       const ytd_cob   = b2b ? b2b.mtd_cob   + b2b.ytdPrev_cob   : 0;
       const ytd_aif   = b2b ? b2b.mtd_aif   + b2b.ytdPrev_aif   : 0;
@@ -294,8 +297,8 @@ export async function GET(request: NextRequest) {
         '', // YTD Target — not yet available
       ] : Array(18).fill('');
 
-      // B2C columns
-      const b2c = b2cMap.get(nameLower);
+      // B2C columns — match by work_email (advisor column stores emails)
+      const b2c = b2cMap.get(emailKey);
       const b2cCols = b2c ? [
         b2c['team'] || '',
         toI(b2c['assigned_leads']),
