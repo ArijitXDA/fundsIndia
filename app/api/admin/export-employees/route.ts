@@ -10,8 +10,25 @@ const VERTICAL_BU_MAP: Record<string, string[]> = {
   PW:  ['Private Wealth'],
 };
 
-// Tiers that can see all verticals
 const ALL_ACCESS_TIERS = ['dev', 'super', 'co'];
+
+function toN(v: any, dp = 4): string {
+  const n = parseFloat(v ?? 0);
+  return isNaN(n) ? '' : n.toFixed(dp);
+}
+
+function toI(v: any): string {
+  const n = parseFloat(v ?? 0);
+  return isNaN(n) ? '' : Math.round(n).toString();
+}
+
+function escapeCsv(val: string): string {
+  const s = String(val ?? '');
+  if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -38,47 +55,33 @@ export async function GET(request: NextRequest) {
       .single();
     if (!adminRole) return NextResponse.json({ error: 'Not an admin' }, { status: 403 });
 
-    // 3. Determine which business units to include
-    let allowedBUs: string[] | null = null; // null = all
-    if (!ALL_ACCESS_TIERS.includes(adminRole.tier)) {
-      // Vertical admin — restrict to their vertical
-      const vert = adminRole.vertical; // 'B2B' | 'B2C' | 'PW'
-      allowedBUs = VERTICAL_BU_MAP[vert] ?? [];
-    }
+    // 3. Determine vertical scope
+    const isAllAccess = ALL_ACCESS_TIERS.includes(adminRole.tier);
+    const allowedBUs: string[] | null = isAllAccess
+      ? null
+      : (VERTICAL_BU_MAP[adminRole.vertical] ?? []);
 
-    // 4. Fetch ALL active employees (we need all to resolve manager names)
-    const { data: allEmployees, error: allEmpError } = await supabaseAdmin
+    // 4. Fetch ALL active employees (needed for manager name lookups)
+    const { data: allEmployees, error: empError } = await supabaseAdmin
       .from('employees')
       .select(
         'employee_number, full_name, work_email, business_unit, job_title, department, sub_department, location, reporting_manager_emp_number, employment_status, date_joined'
       )
       .eq('employment_status', 'Active');
 
-    if (allEmpError) {
+    if (empError) {
       return NextResponse.json(
-        { error: 'Failed to fetch employees', details: allEmpError.message },
+        { error: 'Failed to fetch employees', details: empError.message },
         { status: 500 }
       );
     }
 
-    // Build a map for manager name lookups: emp_number → full_name
-    const managerNameMap = new Map<string, string>(
-      (allEmployees || []).map(e => [e.employee_number, e.full_name])
+    // Manager name lookup map: emp_number → full_name
+    const empNameMap = new Map<string, string>(
+      (allEmployees || []).map(e => [e.employee_number, e.full_name || ''])
     );
 
-    // Filter to the allowed BUs for the actual export rows
-    const employees = allowedBUs
-      ? (allEmployees || []).filter(e => allowedBUs!.includes(e.business_unit))
-      : (allEmployees || []);
-
-    // Sort: business_unit asc, full_name asc
-    employees.sort((a, b) => {
-      const buCmp = (a.business_unit || '').localeCompare(b.business_unit || '');
-      if (buCmp !== 0) return buCmp;
-      return (a.full_name || '').localeCompare(b.full_name || '');
-    });
-
-    // 5. Fetch all B2B sales (MTD + YTD) and B2C sales for metrics
+    // 5. Fetch all sales data in parallel
     const [
       { data: b2bMTD },
       { data: b2bYTD },
@@ -89,45 +92,97 @@ export async function GET(request: NextRequest) {
       supabaseAdmin.from('b2c').select('*'),
     ]);
 
-    // Build B2B sales map: emp_number → { mtdTotal, ytdTotal }
-    const b2bMap = new Map<string, { mtdTotal: number; ytdTotal: number }>();
+    // ── B2B: aggregate by RM Emp ID ──────────────────────────────────────────
+    // Structure: empId → { mtd_mf, mtd_cob, mtd_aif, mtd_alt, mtd_total,
+    //                       ytd_mf, ytd_cob, ytd_aif, ytd_alt, ytd_total,
+    //                       branch, zone, bm, rgm, zm }
+    interface B2BEntry {
+      mtd_mf: number; mtd_cob: number; mtd_aif: number; mtd_alt: number; mtd_total: number;
+      ytdPrev_mf: number; ytdPrev_cob: number; ytdPrev_aif: number; ytdPrev_alt: number; ytdPrev_total: number;
+      branch: string; zone: string; bm: string; rgm: string; zm: string;
+    }
+
+    const b2bMap = new Map<string, B2BEntry>();
+
+    const ensureB2B = (id: string, row: any): B2BEntry => {
+      if (!b2bMap.has(id)) {
+        b2bMap.set(id, {
+          mtd_mf: 0, mtd_cob: 0, mtd_aif: 0, mtd_alt: 0, mtd_total: 0,
+          ytdPrev_mf: 0, ytdPrev_cob: 0, ytdPrev_aif: 0, ytdPrev_alt: 0, ytdPrev_total: 0,
+          branch: row['Branch'] || '',
+          zone: row['Zone'] || '',
+          bm: row['BM'] || '',
+          rgm: row['RGM'] || '',
+          zm: row['ZM'] || '',
+        });
+      }
+      return b2bMap.get(id)!;
+    };
 
     (b2bMTD || []).forEach(row => {
       const id = String(row['RM Emp ID'] || '').trim();
       if (!id || id === '#N/A') return;
-      const entry = b2bMap.get(id) ?? { mtdTotal: 0, ytdTotal: 0 };
-      const val = parseFloat(row['Total Net Sales (COB 100%)'] || 0);
-      entry.mtdTotal += isNaN(val) ? 0 : val;
-      b2bMap.set(id, entry);
+      const e = ensureB2B(id, row);
+      e.mtd_mf    += parseFloat(row['MF+SIF+MSCI'] || 0) || 0;
+      e.mtd_cob   += parseFloat(row['COB (100%)'] || 0) || 0;
+      e.mtd_aif   += parseFloat(row['AIF+PMS+LAS+DYNAMO (TRAIL)'] || 0) || 0;
+      e.mtd_alt   += parseFloat(row['ALTERNATE'] || 0) || 0;
+      e.mtd_total += parseFloat(row['Total Net Sales (COB 100%)'] || 0) || 0;
+      // Keep branch/zone/bm from first MTD row encountered
+      if (!e.branch) e.branch = row['Branch'] || '';
+      if (!e.zone)   e.zone   = row['Zone']   || '';
+      if (!e.bm)     e.bm     = row['BM']     || '';
+      if (!e.rgm)    e.rgm    = row['RGM']    || '';
+      if (!e.zm)     e.zm     = row['ZM']     || '';
     });
 
     (b2bYTD || []).forEach(row => {
       const id = String(row['RM Emp ID'] || '').trim();
       if (!id || id === '#N/A') return;
-      const entry = b2bMap.get(id) ?? { mtdTotal: 0, ytdTotal: 0 };
-      const val = parseFloat(row['Total Net Sales (COB 100%)'] || 0);
-      entry.ytdTotal += isNaN(val) ? 0 : val;
-      b2bMap.set(id, entry);
+      const e = ensureB2B(id, row);
+      e.ytdPrev_mf    += parseFloat(row['MF+SIF+MSCI'] || 0) || 0;
+      e.ytdPrev_cob   += parseFloat(row['SUM of COB (100%)'] || row['COB (100%)'] || 0) || 0;
+      e.ytdPrev_aif   += parseFloat(row['SUM of AIF+PMS+LAS (TRAIL)'] || row['AIF+PMS+LAS+DYNAMO (TRAIL)'] || 0) || 0;
+      e.ytdPrev_alt   += parseFloat(row['SUM of ALT'] || row['ALTERNATE'] || 0) || 0;
+      e.ytdPrev_total += parseFloat(row['Total Net Sales (COB 100%)'] || 0) || 0;
     });
 
-    // ytdTotal = cumulative prior months + current month (MTD)
-    b2bMap.forEach((v, k) => {
-      b2bMap.set(k, { ...v, ytdTotal: v.mtdTotal + v.ytdTotal });
-    });
-
-    // Build B2C map: advisor name (lowercase) → row data
+    // ── B2C: by advisor name (lowercase) ────────────────────────────────────
     const b2cMap = new Map<string, any>();
     (b2cRows || []).forEach(row => {
       const name = String(row['advisor'] || '').trim().toLowerCase();
       if (name) b2cMap.set(name, row);
     });
 
-    // 6. Build CSV rows
+    // ── Determine which employees to include in the report ───────────────────
+    // We include:
+    //   - Employees from allowed BUs (per vertical scope)
+    //   - OR employees who appear in B2B/B2C sales data (they may be cross-BU)
+    const scopedEmployees = (allEmployees || []).filter(emp => {
+      if (!allowedBUs) return true; // all access
+      return allowedBUs.includes(emp.business_unit || '');
+    });
+
+    // Sort by vertical then name
+    scopedEmployees.sort((a, b) => {
+      const buA = a.business_unit || '';
+      const buB = b.business_unit || '';
+      if (buA !== buB) return buA.localeCompare(buB);
+      return (a.full_name || '').localeCompare(b.full_name || '');
+    });
+
+    // ────────────────────────────────────────────────────────────────────────
+    // BUILD CSV
+    // We produce a SINGLE report with all verticals together.
+    // B2B-specific columns are blank for B2C/PW employees and vice versa.
+    // ────────────────────────────────────────────────────────────────────────
+
     const headers = [
+      // Identity
       'Emp ID',
       'Vertical',
       'Employee Name',
-      'Work Email',
+      'Employee Email',
       'Job Title',
       'Department',
       'Sub Department',
@@ -135,47 +190,68 @@ export async function GET(request: NextRequest) {
       'Reporting Manager Emp ID',
       'Reporting Manager Name',
       'Date Joined',
-      // B2B metrics (filled for B2B employees)
-      'B2B MTD Net Sales (Cr)',
-      'B2B YTD Net Sales (Cr)',
-      // B2C metrics (filled for B2C employees)
+
+      // ── B2B Sales Metrics ────────────────────────────────────────────────
+      // MTD
+      'B2B Branch',
+      'B2B Zone',
+      'B2B BM',
+      'B2B RGM',
+      'B2B ZM',
+      'B2B MTD — MF+SIF+MSCI (Cr)',
+      'B2B MTD — COB 100% (Cr)',
+      'B2B MTD — AIF+PMS+LAS+Dynamo Trail (Cr)',
+      'B2B MTD — Alternate (Cr)',
+      'B2B MTD — Total Net Sales COB 100% (Cr)',
+      // YTD (full year = prior months + current MTD)
+      'B2B YTD — MF+SIF+MSCI (Cr)',
+      'B2B YTD — COB 100% (Cr)',
+      'B2B YTD — AIF+PMS+LAS+Dynamo Trail (Cr)',
+      'B2B YTD — Alternate (Cr)',
+      'B2B YTD — Total Net Sales COB 100% (Cr)',
+      // Targets (placeholder — tables not yet uploaded)
+      'B2B MTD Target (Cr)',
+      'B2B QTD Target (Cr)',
+      'B2B YTD Target (Cr)',
+
+      // ── B2C Sales Metrics ────────────────────────────────────────────────
+      'B2C Team',
+      'B2C Assigned Leads',
       'B2C Net Inflow MTD (Cr)',
       'B2C Net Inflow YTD (Cr)',
-      'B2C Current AUM (Cr)',
+      'B2C Current AUM MTM (Cr)',
       'B2C AUM Growth MTM %',
-      'B2C Assigned Leads',
+      'B2C New SIP Inflow MTD (Cr)',
       'B2C New SIP Inflow YTD (Cr)',
+      'B2C Total SIP Inflow MTD (Cr)',
+      'B2C Total SIP Inflow YTD (Cr)',
+      'B2C Gross Lumpsum Inflow MTD (Cr)',
+      'B2C Gross Lumpsum Inflow YTD (Cr)',
+      'B2C Total Outflow MTD (Cr)',
+      'B2C Total Outflow YTD (Cr)',
+      'B2C MSCI Inflow MTD (Cr)',
+      'B2C MSCI Inflow YTD (Cr)',
+      'B2C FD Inflow MTD (Cr)',
+      'B2C FD Inflow YTD (Cr)',
+      'B2C Total SIP Book AO 31 March (Cr)',
+      'B2C Assigned AUM AO 31 March (Cr)',
+      'B2C YTD Net AUM Growth %',
+      // Targets (placeholder — tables not yet uploaded)
+      'B2C MTD Target (Cr)',
+      'B2C QTD Target (Cr)',
+      'B2C YTD Target (Cr)',
     ];
 
-    const rows: string[][] = employees.map(emp => {
-      const bu = (emp.business_unit || '').trim();
+    const csvRows: string[][] = scopedEmployees.map(emp => {
+      const bu      = (emp.business_unit || '').trim();
       const vertical = bu === 'Private Wealth' ? 'PW' : bu;
-      const empNum = emp.employee_number || '';
-      const empNameLower = (emp.full_name || '').trim().toLowerCase();
+      const empNum   = emp.employee_number || '';
+      const nameLower = (emp.full_name || '').trim().toLowerCase();
+      const mgrNum   = emp.reporting_manager_emp_number || '';
+      const mgrName  = mgrNum ? (empNameMap.get(mgrNum) || '') : '';
 
-      // Resolve reporting manager name from the map
-      const mgrEmpNum = emp.reporting_manager_emp_number || '';
-      const mgrName = mgrEmpNum ? (managerNameMap.get(mgrEmpNum) || '') : '';
-
-      // B2B sales
-      const b2bSales = b2bMap.get(empNum);
-      const b2bMTDVal = b2bSales ? b2bSales.mtdTotal.toFixed(4) : '';
-      const b2bYTDVal = b2bSales ? b2bSales.ytdTotal.toFixed(4) : '';
-
-      // B2C sales
-      const b2cRow = b2cMap.get(empNameLower);
-      const toF = (v: any, dp = 4) => {
-        const n = parseFloat(v || 0);
-        return isNaN(n) ? '' : n.toFixed(dp);
-      };
-      const b2cMTD       = b2cRow ? toF(b2cRow['net_inflow_mtd[cr]'])       : '';
-      const b2cYTD       = b2cRow ? toF(b2cRow['net_inflow_ytd[cr]'])       : '';
-      const b2cAUM       = b2cRow ? toF(b2cRow['current_aum_mtm [cr.]'])    : '';
-      const b2cAUMGrowth = b2cRow ? toF(b2cRow['aum_growth_mtm %'], 2)      : '';
-      const b2cLeads     = b2cRow ? Math.round(parseFloat(b2cRow['assigned_leads'] || 0)).toString() : '';
-      const b2cNewSIP    = b2cRow ? toF(b2cRow['new_sip_inflow_ytd[cr.]'])  : '';
-
-      return [
+      // Identity columns
+      const identity = [
         empNum,
         vertical,
         emp.full_name || '',
@@ -184,35 +260,80 @@ export async function GET(request: NextRequest) {
         emp.department || '',
         emp.sub_department || '',
         emp.location || '',
-        mgrEmpNum,
+        mgrNum,
         mgrName,
         emp.date_joined || '',
-        b2bMTDVal,
-        b2bYTDVal,
-        b2cMTD,
-        b2cYTD,
-        b2cAUM,
-        b2cAUMGrowth,
-        b2cLeads,
-        b2cNewSIP,
       ];
+
+      // B2B columns
+      const b2b = b2bMap.get(empNum);
+      const ytd_mf    = b2b ? b2b.mtd_mf    + b2b.ytdPrev_mf    : 0;
+      const ytd_cob   = b2b ? b2b.mtd_cob   + b2b.ytdPrev_cob   : 0;
+      const ytd_aif   = b2b ? b2b.mtd_aif   + b2b.ytdPrev_aif   : 0;
+      const ytd_alt   = b2b ? b2b.mtd_alt   + b2b.ytdPrev_alt   : 0;
+      const ytd_total = b2b ? b2b.mtd_total + b2b.ytdPrev_total : 0;
+
+      const b2bCols = b2b ? [
+        b2b.branch,
+        b2b.zone,
+        b2b.bm,
+        b2b.rgm,
+        b2b.zm,
+        b2b.mtd_mf.toFixed(4),
+        b2b.mtd_cob.toFixed(4),
+        b2b.mtd_aif.toFixed(4),
+        b2b.mtd_alt.toFixed(4),
+        b2b.mtd_total.toFixed(4),
+        ytd_mf.toFixed(4),
+        ytd_cob.toFixed(4),
+        ytd_aif.toFixed(4),
+        ytd_alt.toFixed(4),
+        ytd_total.toFixed(4),
+        '', // MTD Target — not yet available
+        '', // QTD Target — not yet available
+        '', // YTD Target — not yet available
+      ] : Array(18).fill('');
+
+      // B2C columns
+      const b2c = b2cMap.get(nameLower);
+      const b2cCols = b2c ? [
+        b2c['team'] || '',
+        toI(b2c['assigned_leads']),
+        toN(b2c['net_inflow_mtd[cr]']),
+        toN(b2c['net_inflow_ytd[cr]']),
+        toN(b2c['current_aum_mtm [cr.]']),
+        toN(b2c['aum_growth_mtm %'], 2),
+        toN(b2c['new_sip_inflow_mtd[cr.]']),
+        toN(b2c['new_sip_inflow_ytd[cr.]']),
+        toN(b2c['total_sip_inflow_mtd[cr.]']),
+        toN(b2c['total_sip_inflow_ytd[cr.]']),
+        toN(b2c['gross_lumpsum_inflow_mtd[cr.]']),
+        toN(b2c['gross_lumpsum_inflow_ytd[cr.]']),
+        toN(b2c['total_outflow_mtd[cr.]']),
+        toN(b2c['total_outflow_ytd[cr.]']),
+        toN(b2c['msci_inflow_mtd[cr.]']),
+        toN(b2c['msci_inflow_ytd[cr.]']),
+        toN(b2c['fd_inflow_mtd[cr.]']),
+        toN(b2c['fd_inflow_ytd[cr.]']),
+        toN(b2c['total_sip_book_ao_31stmarch[cr.]']),
+        toN(b2c['assigned_aum_ao_31stmarch[cr.]']),
+        toN(b2c['ytd_net_aum_growth %'], 2),
+        '', // MTD Target — not yet available
+        '', // QTD Target — not yet available
+        '', // YTD Target — not yet available
+      ] : Array(24).fill('');
+
+      return [...identity, ...b2bCols, ...b2cCols];
     });
 
-    // 7. Serialize to CSV
-    const escapeCsv = (val: string) => {
-      if (val.includes(',') || val.includes('"') || val.includes('\n')) {
-        return `"${val.replace(/"/g, '""')}"`;
-      }
-      return val;
-    };
-
+    // Serialize
     const csvLines = [
       headers.map(escapeCsv).join(','),
-      ...rows.map(row => row.map(escapeCsv).join(',')),
+      ...csvRows.map(row => row.map(escapeCsv).join(',')),
     ];
     const csv = csvLines.join('\r\n');
 
-    // 8. Log this export action
+    // Log the export action
     try {
       await supabaseAdmin.from('activity_logs').insert({
         user_id: sessionData.userId,
@@ -220,26 +341,22 @@ export async function GET(request: NextRequest) {
         action_details: {
           tier: adminRole.tier,
           vertical: adminRole.vertical || 'all',
-          row_count: rows.length,
+          row_count: csvRows.length,
           allowed_bus: allowedBUs || 'all',
         },
       });
     } catch (_) {}
 
-    // 9. Return as downloadable CSV
-    const verticalLabel = adminRole.vertical ? `_${adminRole.vertical}` : '_ALL';
-    const filename = `employees${verticalLabel}_${new Date().toISOString().slice(0, 10)}.csv`;
-
     return new NextResponse(csv, {
       status: 200,
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Disposition': 'attachment; filename="Sales Dashboard Report.csv"',
         'Cache-Control': 'no-store',
       },
     });
   } catch (error: any) {
-    console.error('[EXPORT EMPLOYEES]', error);
+    console.error('[EXPORT SALES REPORT]', error);
     return NextResponse.json(
       { error: 'Internal server error', details: error.message },
       { status: 500 }

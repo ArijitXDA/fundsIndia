@@ -286,7 +286,7 @@ function DataSection({
       const blob = await res.blob();
       const disposition = res.headers.get('Content-Disposition') || '';
       const match = disposition.match(/filename="(.+?)"/);
-      const filename = match ? match[1] : `employees_${new Date().toISOString().slice(0,10)}.csv`;
+      const filename = match ? match[1] : 'Sales Dashboard Report.csv';
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -309,16 +309,18 @@ function DataSection({
           <h2 className="text-2xl font-bold text-gray-900 mb-1">{title}</h2>
           <p className="text-sm text-gray-500">{description}</p>
         </div>
-        {/* Download Employee CSV button — always visible in data sections */}
+        {/* Sales Dashboard Report download — always visible in data sections */}
         <button
           onClick={handleDownloadCSV}
           disabled={downloading}
           className="flex items-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white text-sm font-medium rounded-lg transition-colors shadow-sm shrink-0 ml-6"
-          title={`Download employee data CSV${downloadVertical !== 'all' ? ` for ${downloadVertical}` : ' for all verticals'}`}
+          title={`Download Sales Dashboard Report${downloadVertical !== 'all' ? ` for ${downloadVertical}` : ' — All Verticals'}`}
         >
           {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
           <span>
-            {downloading ? 'Downloading...' : `Download Employee CSV${downloadVertical !== 'all' ? ` (${downloadVertical})` : ''}`}
+            {downloading
+              ? 'Downloading...'
+              : `Sales Dashboard Report${downloadVertical !== 'all' ? ` (${downloadVertical})` : ''}`}
           </span>
         </button>
       </div>
