@@ -2,25 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { TrendingUp, Award, Target, BarChart3, Trophy, Medal, Crown, Building2, Users, Network, KeyRound, CheckCircle, Shield, LogOut } from 'lucide-react';
+import { TrendingUp, Award, BarChart3, Trophy, Medal, Crown, Building2, Users, Network, KeyRound, CheckCircle, Shield, LogOut, UserCheck, Globe } from 'lucide-react';
 import OrgChartModal from '@/components/OrgChartModal';
-
-interface SalesBreakdown {
-  mfSifMsci: number;
-  cob100: number;
-  aifPmsLasDynamo: number;
-  alternate: number;
-  total: number;
-}
-
-interface EmployeeSales {
-  employeeId: string;
-  employeeName: string;
-  branch: string;
-  zone: string;
-  mtd: SalesBreakdown;
-  ytdTotal: SalesBreakdown;
-}
 
 interface TopPerformer {
   rank: number;
@@ -53,7 +36,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [salesData, setSalesData] = useState<any>(null);
   const [b2cData, setB2cData] = useState<any>(null);
-  const [myPerformance, setMyPerformance] = useState<EmployeeSales | null>(null);
+  const [myPerformance, setMyPerformance] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<TabType>('B2B');
   const [isOrgChartOpen, setIsOrgChartOpen] = useState(false);
   const [passwordResetToast, setPasswordResetToast] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
@@ -85,16 +68,14 @@ export default function DashboardPage() {
         const b2cData = await b2cResponse.json();
         setB2cData(b2cData);
 
-        // Find current user's performance
-        const empNumber = data.user.employee?.employee_number;
-        const userEmail = data.user.email;
-
-        if (empNumber && salesData.allEmployeeSales) {
-          const myData = salesData.allEmployeeSales.find(
-            (emp: EmployeeSales) => emp.employeeId === empNumber
-          );
-          setMyPerformance(myData);
-        }
+        // Fetch current user's performance (handles direct, manager, non-sales)
+        try {
+          const perfResponse = await fetch('/api/my-performance');
+          if (perfResponse.ok) {
+            const perfData = await perfResponse.json();
+            setMyPerformance(perfData);
+          }
+        } catch {}
 
         setLoading(false);
       } catch (error) {
@@ -216,7 +197,7 @@ export default function DashboardPage() {
                 className="h-10 w-auto"
               />
               <div>
-                <h1 className="text-2xl font-bold text-gray-900">RNR Dashboard</h1>
+                <h1 className="text-2xl font-bold text-gray-900">Hall of Fame</h1>
                 <p className="text-sm text-gray-500">Sales Contest & Performance Tracking</p>
               </div>
             </div>
@@ -266,20 +247,27 @@ export default function DashboardPage() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Hero Section - My Performance */}
+        {/* Hero Section - My Performance (for all users) */}
         <div className="mb-8">
           <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 rounded-2xl shadow-2xl p-8 text-white">
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h2 className="text-3xl font-bold mb-2">Welcome back, {user?.employee?.full_name?.split(' ')[0]}! 👋</h2>
-                <p className="text-indigo-100">Here's your performance overview</p>
+                <p className="text-indigo-100">
+                  {myPerformance?.type === 'direct' && "Here's your performance overview"}
+                  {myPerformance?.type === 'manager' && "Here's your team's combined performance"}
+                  {myPerformance?.type === 'non-sales' && "Non-Sales Employee — Org Level Performance"}
+                  {!myPerformance && "Loading performance data..."}
+                </p>
               </div>
-              <TrendingUp className="w-16 h-16 text-white/30" />
+              {myPerformance?.type === 'direct' && <TrendingUp className="w-16 h-16 text-white/30" />}
+              {myPerformance?.type === 'manager' && <UserCheck className="w-16 h-16 text-white/30" />}
+              {myPerformance?.type === 'non-sales' && <Globe className="w-16 h-16 text-white/30" />}
             </div>
 
-            {myPerformance ? (
+            {/* TYPE: DIRECT — B2B performer */}
+            {myPerformance?.type === 'direct' && myPerformance?.vertical === 'B2B' && (
               <div className="mt-8 space-y-6">
-                {/* MTD Performance */}
                 <div>
                   <h3 className="text-xl font-bold mb-4 text-white/90">MTD Performance</h3>
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -307,8 +295,6 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 </div>
-
-                {/* YTD Performance */}
                 <div>
                   <h3 className="text-xl font-bold mb-4 text-white/90">YTD Performance</h3>
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -336,8 +322,6 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 </div>
-
-                {/* Location */}
                 <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
                   <div className="flex items-center space-x-4">
                     <Award className="w-8 h-8 text-yellow-300" />
@@ -348,11 +332,178 @@ export default function DashboardPage() {
                   </div>
                 </div>
               </div>
-            ) : (
+            )}
+
+            {/* TYPE: DIRECT — B2C performer */}
+            {myPerformance?.type === 'direct' && myPerformance?.vertical === 'B2C' && (
+              <div className="mt-8 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                    <p className="text-xs text-white/70 mb-1">Net Inflow MTD</p>
+                    <p className="text-2xl font-bold">₹{(myPerformance.b2c?.netInflowMTD || 0).toFixed(2)} Cr</p>
+                  </div>
+                  <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                    <p className="text-xs text-white/70 mb-1">Net Inflow YTD</p>
+                    <p className="text-2xl font-bold">₹{(myPerformance.b2c?.netInflowYTD || 0).toFixed(2)} Cr</p>
+                  </div>
+                  <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                    <p className="text-xs text-white/70 mb-1">Current AUM</p>
+                    <p className="text-2xl font-bold">₹{(myPerformance.b2c?.currentAUM || 0).toFixed(2)} Cr</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                    <p className="text-xs text-white/70 mb-1">AUM Growth MTM</p>
+                    <p className="text-2xl font-bold">{(myPerformance.b2c?.aumGrowthPct || 0).toFixed(2)}%</p>
+                  </div>
+                  <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                    <p className="text-xs text-white/70 mb-1">Assigned Leads</p>
+                    <p className="text-2xl font-bold">{Math.round(myPerformance.b2c?.assignedLeads || 0)}</p>
+                  </div>
+                  <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                    <p className="text-xs text-white/70 mb-1">New SIP Inflow YTD</p>
+                    <p className="text-2xl font-bold">₹{(myPerformance.b2c?.newSIPInflowYTD || 0).toFixed(3)} Cr</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TYPE: MANAGER — team aggregate */}
+            {myPerformance?.type === 'manager' && (
+              <div className="mt-8 space-y-6">
+                <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20 flex items-center space-x-4 mb-2">
+                  <UserCheck className="w-8 h-8 text-yellow-300" />
+                  <div>
+                    <p className="text-sm text-white/70">Team Size</p>
+                    <p className="text-xl font-bold">
+                      {myPerformance.reporteeCount} reportee{myPerformance.reporteeCount !== 1 ? 's' : ''}
+                      {myPerformance.b2b && ` • ${myPerformance.b2b.reporteeCount} B2B RM${myPerformance.b2b.reporteeCount !== 1 ? 's' : ''}`}
+                      {myPerformance.b2c && ` • ${myPerformance.b2c.reporteeCount} B2C Advisor${myPerformance.b2c.reporteeCount !== 1 ? 's' : ''}`}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Manager B2B Numbers */}
+                {myPerformance.b2b && (
+                  <div>
+                    <h3 className="text-lg font-bold mb-3 text-white/90">Team B2B — MTD</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                        <p className="text-xs text-white/70 mb-1">MF+SIF+MSCI</p>
+                        <p className="text-2xl font-bold">{formatCrore(myPerformance.b2b.mtd?.mfSifMsci || 0)}</p>
+                      </div>
+                      <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                        <p className="text-xs text-white/70 mb-1">COB (100%)</p>
+                        <p className="text-2xl font-bold">{formatCrore(myPerformance.b2b.mtd?.cob100 || 0)}</p>
+                      </div>
+                      <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                        <p className="text-xs text-white/70 mb-1">AIF+PMS+LAS+DYNAMO</p>
+                        <p className="text-2xl font-bold">{formatCrore(myPerformance.b2b.mtd?.aifPmsLasDynamo || 0)}</p>
+                      </div>
+                      <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                        <p className="text-xs text-white/70 mb-1">ALTERNATE</p>
+                        <p className="text-2xl font-bold">{formatCrore(myPerformance.b2b.mtd?.alternate || 0)}</p>
+                      </div>
+                    </div>
+                    <div className="mt-4 bg-white/20 backdrop-blur-sm rounded-xl p-4 border border-white/30">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold text-white/90">Team MTD Total</span>
+                        <span className="text-3xl font-bold">{formatCrore(myPerformance.b2b.mtd?.total || 0)}</span>
+                      </div>
+                    </div>
+
+                    <h3 className="text-lg font-bold mb-3 mt-6 text-white/90">Team B2B — YTD</h3>
+                    <div className="mt-4 bg-white/20 backdrop-blur-sm rounded-xl p-4 border border-white/30">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold text-white/90">Team YTD Total</span>
+                        <span className="text-3xl font-bold">{formatCrore(myPerformance.b2b.ytdTotal?.total || 0)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Manager B2C Numbers */}
+                {myPerformance.b2c && (
+                  <div>
+                    <h3 className="text-lg font-bold mb-3 text-white/90">Team B2C</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                        <p className="text-xs text-white/70 mb-1">Net Inflow MTD</p>
+                        <p className="text-2xl font-bold">₹{(myPerformance.b2c.netInflowMTD || 0).toFixed(2)} Cr</p>
+                      </div>
+                      <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                        <p className="text-xs text-white/70 mb-1">Net Inflow YTD</p>
+                        <p className="text-2xl font-bold">₹{(myPerformance.b2c.netInflowYTD || 0).toFixed(2)} Cr</p>
+                      </div>
+                      <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                        <p className="text-xs text-white/70 mb-1">Current AUM</p>
+                        <p className="text-2xl font-bold">₹{(myPerformance.b2c.currentAUM || 0).toFixed(2)} Cr</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TYPE: NON-SALES — org-level totals */}
+            {myPerformance?.type === 'non-sales' && (
+              <div className="mt-8 space-y-6">
+                <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20 flex items-center space-x-4 mb-2">
+                  <Globe className="w-8 h-8 text-yellow-300" />
+                  <div>
+                    <p className="text-sm text-white/70">Org Summary</p>
+                    <p className="text-xl font-bold">
+                      {myPerformance.totalB2BRMs} B2B RMs • {myPerformance.totalB2CAdvisors} B2C Advisors
+                    </p>
+                  </div>
+                </div>
+
+                {/* B2B Org */}
+                <div>
+                  <h3 className="text-lg font-bold mb-3 text-white/90">B2B — Org Level</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-white/20 backdrop-blur-sm rounded-xl p-4 border border-white/30">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold text-white/90">MTD Net Sales</span>
+                        <span className="text-2xl font-bold">{formatCrore(myPerformance.b2b?.mtd?.total || 0)}</span>
+                      </div>
+                    </div>
+                    <div className="bg-white/20 backdrop-blur-sm rounded-xl p-4 border border-white/30">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold text-white/90">YTD Net Sales</span>
+                        <span className="text-2xl font-bold">{formatCrore(myPerformance.b2b?.ytdTotal?.total || 0)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* B2C Org */}
+                <div>
+                  <h3 className="text-lg font-bold mb-3 text-white/90">B2C — Org Level</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                      <p className="text-xs text-white/70 mb-1">Net Inflow MTD</p>
+                      <p className="text-2xl font-bold">₹{(myPerformance.b2c?.netInflowMTD || 0).toFixed(2)} Cr</p>
+                    </div>
+                    <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                      <p className="text-xs text-white/70 mb-1">Net Inflow YTD</p>
+                      <p className="text-2xl font-bold">₹{(myPerformance.b2c?.netInflowYTD || 0).toFixed(2)} Cr</p>
+                    </div>
+                    <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                      <p className="text-xs text-white/70 mb-1">Total Current AUM</p>
+                      <p className="text-2xl font-bold">₹{(myPerformance.b2c?.currentAUM || 0).toFixed(2)} Cr</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Loading / Error state */}
+            {!myPerformance && (
               <div className="bg-white/10 backdrop-blur-sm rounded-xl p-8 text-center border border-white/20">
                 <BarChart3 className="w-16 h-16 text-white/50 mx-auto mb-4" />
-                <p className="text-xl font-semibold mb-2">No Sales Data Available</p>
-                <p className="text-white/70">Your sales performance will appear here once data is available</p>
+                <p className="text-xl font-semibold mb-2">Loading Performance Data...</p>
+                <p className="text-white/70">Please wait while we calculate your numbers</p>
               </div>
             )}
           </div>

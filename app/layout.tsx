@@ -5,7 +5,7 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "RNR Dashboard - FundsIndia",
+  title: "Hall of Fame - FundsIndia",
   description: "Sales Contest and Performance Tracking Dashboard",
   icons: {
     icon: '/favicon.ico',

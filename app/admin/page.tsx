@@ -222,7 +222,7 @@ export default function AdminPage() {
             />
           )}
           {activeSection === 'contests' && (
-            <ComingSoonSection title="Contest Management" description="Create, edit, and manage R&R contests." />
+            <ComingSoonSection title="Contest Management" description="Create, edit, and manage Hall of Fame contests." />
           )}
         </main>
       </div>

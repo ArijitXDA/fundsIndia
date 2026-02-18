@@ -67,7 +67,7 @@ export default function SignUpPage() {
           />
           <h2 className="text-3xl font-bold text-gray-900">Create Account</h2>
           <p className="mt-2 text-sm text-gray-600">
-            RNR Dashboard — Sales Contest & Performance Tracking
+            Hall of Fame — Sales Contest & Performance Tracking
           </p>
         </div>
 
@@ -191,7 +191,7 @@ export default function SignUpPage() {
         {/* Footer */}
         <div className="mt-6 border-t border-gray-100 pt-4">
           <p className="text-center text-xs text-gray-400">
-            FundsIndia RNR Dashboard v1.0 &mdash; For internal use only
+            FundsIndia Hall of Fame v1.0 &mdash; For internal use only
           </p>
         </div>
       </div>

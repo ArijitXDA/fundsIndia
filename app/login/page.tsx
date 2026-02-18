@@ -95,7 +95,7 @@ export default function LoginPage() {
             alt="FundsIndia"
             className="mx-auto h-12 w-auto mb-6"
           />
-          <h2 className="text-3xl font-bold text-gray-900">RNR Dashboard</h2>
+          <h2 className="text-3xl font-bold text-gray-900">Hall of Fame</h2>
           <p className="mt-2 text-sm text-gray-600">
             Sales Contest &amp; Performance Tracking
           </p>
@@ -243,7 +243,7 @@ export default function LoginPage() {
               <div className="w-full border-t border-gray-300" />
             </div>
             <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-white text-gray-500">FundsIndia RNR Dashboard v1.0</span>
+              <span className="px-2 bg-white text-gray-500">FundsIndia Hall of Fame v1.0</span>
             </div>
           </div>
         </div>

@@ -482,7 +482,7 @@ export default function SetPasswordPage() {
         {/* Footer */}
         <div className="mt-4 border-t border-gray-100 pt-4">
           <p className="text-center text-xs text-gray-400">
-            FundsIndia RNR Dashboard v1.0 &mdash; For internal use only
+            FundsIndia Hall of Fame v1.0 &mdash; For internal use only
           </p>
         </div>
       </div>
