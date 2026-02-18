@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { TrendingUp, Award, BarChart3, Trophy, Medal, Crown, Building2, Users, Network, KeyRound, CheckCircle, Shield, LogOut, UserCheck, Globe } from 'lucide-react';
+import { TrendingUp, Award, BarChart3, Trophy, Medal, Crown, Building2, Users, Network, KeyRound, CheckCircle, Shield, LogOut, UserCheck, Globe, ChevronLeft, ChevronRight } from 'lucide-react';
 import OrgChartModal from '@/components/OrgChartModal';
 
 interface TopPerformer {
@@ -38,8 +38,12 @@ export default function DashboardPage() {
   const [b2cData, setB2cData] = useState<any>(null);
   const [myPerformance, setMyPerformance] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<TabType>('B2B');
+  const handleTabChange = (tab: TabType) => { setActiveTab(tab); setB2bPage(1); setB2cPage(1); };
   const [isOrgChartOpen, setIsOrgChartOpen] = useState(false);
   const [passwordResetToast, setPasswordResetToast] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [b2bPage, setB2bPage] = useState(1);
+  const [b2cPage, setB2cPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -519,7 +523,7 @@ export default function DashboardPage() {
                 return (
                   <button
                     key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
+                    onClick={() => handleTabChange(tab.id)}
                     className={`flex items-center space-x-2 px-6 py-4 rounded-t-xl font-semibold transition-all duration-200 ${
                       activeTab === tab.id
                         ? 'bg-white text-indigo-600 shadow-md border-t-4 border-indigo-600'
@@ -542,59 +546,127 @@ export default function DashboardPage() {
           </div>
 
           {/* Tab Content */}
-          {activeTab === 'B2B' && (
+          {activeTab === 'B2B' && (() => {
+            const allB2B: any[] = salesData?.allEmployeeSales || [];
+            const totalB2B = allB2B.length;
+            const totalPagesB2B = Math.ceil(totalB2B / PAGE_SIZE);
+            const pageB2B = allB2B.slice((b2bPage - 1) * PAGE_SIZE, b2bPage * PAGE_SIZE);
+            const isFirstPageB2B = b2bPage === 1;
+            return (
             <div>
               <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-8 py-6">
-                <div className="flex items-center space-x-3">
-                  <Trophy className="w-8 h-8 text-yellow-300" />
-                  <h2 className="text-2xl font-bold text-white">Top 10 B2B Performers</h2>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <Trophy className="w-8 h-8 text-yellow-300" />
+                    <div>
+                      <h2 className="text-2xl font-bold text-white">
+                        {isFirstPageB2B ? 'Top 10 B2B Performers' : `B2B Rankings — Rank ${(b2bPage - 1) * PAGE_SIZE + 1}–${Math.min(b2bPage * PAGE_SIZE, totalB2B)}`}
+                      </h2>
+                      <p className="text-indigo-100 mt-1">Based on YTD Sales (COB 100%)</p>
+                    </div>
+                  </div>
+                  {totalB2B > 0 && (
+                    <span className="text-sm text-indigo-200 bg-white/10 px-3 py-1 rounded-full">
+                      {totalB2B} RMs ranked
+                    </span>
+                  )}
                 </div>
-                <p className="text-indigo-100 mt-1">Based on YTD Sales (COB 100%)</p>
               </div>
 
               <div className="p-8">
-                {salesData?.top10Performers && salesData.top10Performers.length > 0 ? (
+                {pageB2B.length > 0 ? (
                   <div className="space-y-4">
-                    {salesData.top10Performers.map((performer: TopPerformer, index: number) => (
-                      <div
-                        key={performer.employeeId}
-                        className={`flex items-center justify-between p-5 rounded-xl transition-all duration-200 hover:shadow-md ${
-                          index < 3
-                            ? 'bg-gradient-to-r from-yellow-50 to-amber-50 border-2 border-yellow-200'
-                            : 'bg-gray-50 border border-gray-200 hover:border-indigo-300'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-6 flex-1">
-                          <div className="flex items-center justify-center w-12 h-12 rounded-full bg-white shadow-md">
-                            {getRankIcon(performer.rank)}
+                    {pageB2B.map((performer: any) => {
+                      const rank = performer.rank;
+                      const isMedal = rank <= 3;
+                      return (
+                        <div
+                          key={performer.employeeId}
+                          className={`flex items-center justify-between p-5 rounded-xl transition-all duration-200 hover:shadow-md ${
+                            isMedal
+                              ? 'bg-gradient-to-r from-yellow-50 to-amber-50 border-2 border-yellow-200'
+                              : 'bg-gray-50 border border-gray-200 hover:border-indigo-300'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-6 flex-1">
+                            <div className="flex items-center justify-center w-12 h-12 rounded-full bg-white shadow-md">
+                              {getRankIcon(rank)}
+                            </div>
+                            <div className="flex-1">
+                              <h3 className="text-lg font-bold text-gray-900">{performer.employeeName}</h3>
+                              <p className="text-sm text-gray-600">
+                                {performer.employeeId} • {performer.branch} • {performer.zone}
+                              </p>
+                            </div>
                           </div>
-
-                          <div className="flex-1">
-                            <h3 className="text-lg font-bold text-gray-900">{performer.name}</h3>
-                            <p className="text-sm text-gray-600">
-                              {performer.employeeId} • {performer.branch} • {performer.zone}
-                            </p>
+                          <div className="flex items-center space-x-8 text-right">
+                            <div>
+                              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">MTD Sales</p>
+                              <p className="text-lg font-bold text-indigo-600">{formatCurrency(performer.mtd?.total || 0)}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">YTD Sales</p>
+                              <p className="text-2xl font-bold text-purple-600">{formatCurrency(performer.ytdTotal?.total || 0)}</p>
+                            </div>
                           </div>
                         </div>
-
-                        <div className="flex items-center space-x-8 text-right">
-                          <div>
-                            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">MTD Sales</p>
-                            <p className="text-lg font-bold text-indigo-600">{formatCurrency(performer.mtdSales)}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">YTD Sales</p>
-                            <p className="text-2xl font-bold text-purple-600">{formatCurrency(performer.ytdSales)}</p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="text-center py-12">
                     <Trophy className="w-20 h-20 text-gray-300 mx-auto mb-4" />
                     <p className="text-xl font-semibold text-gray-600 mb-2">No B2B Leaderboard Data</p>
                     <p className="text-gray-500">Top B2B performers will appear here once sales data is available</p>
+                  </div>
+                )}
+
+                {/* Pagination Controls */}
+                {totalPagesB2B > 1 && (
+                  <div className="flex items-center justify-between mt-6 pt-6 border-t border-gray-200">
+                    <button
+                      onClick={() => setB2bPage(p => Math.max(1, p - 1))}
+                      disabled={b2bPage === 1}
+                      className="flex items-center space-x-2 px-4 py-2.5 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      <span>Previous</span>
+                    </button>
+                    <div className="flex items-center space-x-2">
+                      {Array.from({ length: Math.min(totalPagesB2B, 7) }, (_, i) => {
+                        let pageNum: number;
+                        if (totalPagesB2B <= 7) {
+                          pageNum = i + 1;
+                        } else if (b2bPage <= 4) {
+                          pageNum = i + 1;
+                        } else if (b2bPage >= totalPagesB2B - 3) {
+                          pageNum = totalPagesB2B - 6 + i;
+                        } else {
+                          pageNum = b2bPage - 3 + i;
+                        }
+                        return (
+                          <button
+                            key={pageNum}
+                            onClick={() => setB2bPage(pageNum)}
+                            className={`w-9 h-9 text-sm font-medium rounded-lg transition-colors ${
+                              b2bPage === pageNum
+                                ? 'bg-indigo-600 text-white shadow-md'
+                                : 'text-gray-600 hover:bg-gray-100'
+                            }`}
+                          >
+                            {pageNum}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <button
+                      onClick={() => setB2bPage(p => Math.min(totalPagesB2B, p + 1))}
+                      disabled={b2bPage === totalPagesB2B}
+                      className="flex items-center space-x-2 px-4 py-2.5 text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg border border-indigo-200 transition-colors"
+                    >
+                      <span>{b2bPage === totalPagesB2B ? 'Last Page' : 'Next Employees'}</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
                   </div>
                 )}
               </div>
@@ -625,65 +697,134 @@ export default function DashboardPage() {
                 </div>
               )}
             </div>
-          )}
+            );
+          })()}
 
-          {activeTab === 'B2C' && (
+          {activeTab === 'B2C' && (() => {
+            const allB2C: any[] = b2cData?.allAdvisors || [];
+            const totalB2C = allB2C.length;
+            const totalPagesB2C = Math.ceil(totalB2C / PAGE_SIZE);
+            const pageB2C = allB2C.slice((b2cPage - 1) * PAGE_SIZE, b2cPage * PAGE_SIZE);
+            const isFirstPageB2C = b2cPage === 1;
+            return (
             <div>
               <div className="bg-gradient-to-r from-blue-600 to-cyan-600 px-8 py-6">
-                <div className="flex items-center space-x-3">
-                  <Trophy className="w-8 h-8 text-yellow-300" />
-                  <h2 className="text-2xl font-bold text-white">Top 10 B2C Advisors</h2>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <Trophy className="w-8 h-8 text-yellow-300" />
+                    <div>
+                      <h2 className="text-2xl font-bold text-white">
+                        {isFirstPageB2C ? 'Top 10 B2C Advisors' : `B2C Rankings — Rank ${(b2cPage - 1) * PAGE_SIZE + 1}–${Math.min(b2cPage * PAGE_SIZE, totalB2C)}`}
+                      </h2>
+                      <p className="text-blue-100 mt-1">Based on Net Inflow YTD Performance</p>
+                    </div>
+                  </div>
+                  {totalB2C > 0 && (
+                    <span className="text-sm text-blue-200 bg-white/10 px-3 py-1 rounded-full">
+                      {totalB2C} Advisors ranked
+                    </span>
+                  )}
                 </div>
-                <p className="text-blue-100 mt-1">Based on Net Inflow YTD Performance</p>
               </div>
 
               <div className="p-8">
-                {b2cData?.top10Performers && b2cData.top10Performers.length > 0 ? (
+                {pageB2C.length > 0 ? (
                   <div className="space-y-4">
-                    {b2cData.top10Performers.map((advisor: B2CAdvisor, index: number) => (
-                      <div
-                        key={advisor.advisor}
-                        className={`flex items-center justify-between p-5 rounded-xl transition-all duration-200 hover:shadow-md ${
-                          index < 3
-                            ? 'bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-200'
-                            : 'bg-gray-50 border border-gray-200 hover:border-blue-300'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-6 flex-1">
-                          <div className="flex items-center justify-center w-12 h-12 rounded-full bg-white shadow-md">
-                            {getRankIcon(advisor.rank)}
+                    {pageB2C.map((advisor: any) => {
+                      const rank = advisor.rank;
+                      const isMedal = rank <= 3;
+                      return (
+                        <div
+                          key={advisor.advisor}
+                          className={`flex items-center justify-between p-5 rounded-xl transition-all duration-200 hover:shadow-md ${
+                            isMedal
+                              ? 'bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-200'
+                              : 'bg-gray-50 border border-gray-200 hover:border-blue-300'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-6 flex-1">
+                            <div className="flex items-center justify-center w-12 h-12 rounded-full bg-white shadow-md">
+                              {getRankIcon(rank)}
+                            </div>
+                            <div className="flex-1">
+                              <h3 className="text-lg font-bold text-gray-900">{advisor.advisor}</h3>
+                              <p className="text-sm text-gray-600">
+                                {advisor.team} • {Math.round(advisor.assignedLeads)} Leads
+                              </p>
+                            </div>
                           </div>
-
-                          <div className="flex-1">
-                            <h3 className="text-lg font-bold text-gray-900">{advisor.advisor}</h3>
-                            <p className="text-sm text-gray-600">
-                              {advisor.team} • {advisor.assignedLeads} Leads
-                            </p>
+                          <div className="flex items-center space-x-6 text-right">
+                            <div>
+                              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Net Inflow MTD</p>
+                              <p className="text-lg font-bold text-blue-600">₹{advisor.netInflowMTD?.toFixed(2)} Cr</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Net Inflow YTD</p>
+                              <p className="text-2xl font-bold text-cyan-600">₹{advisor.netInflowYTD?.toFixed(2)} Cr</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Current AUM</p>
+                              <p className="text-lg font-bold text-purple-600">₹{advisor.currentAUM?.toFixed(2)} Cr</p>
+                            </div>
                           </div>
                         </div>
-
-                        <div className="flex items-center space-x-6 text-right">
-                          <div>
-                            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Net Inflow MTD</p>
-                            <p className="text-lg font-bold text-blue-600">₹{advisor.netInflowMTD} Cr</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Net Inflow YTD</p>
-                            <p className="text-2xl font-bold text-cyan-600">₹{advisor.netInflowYTD} Cr</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Current AUM</p>
-                            <p className="text-lg font-bold text-purple-600">₹{advisor.currentAUM} Cr</p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="text-center py-12">
                     <Users className="w-20 h-20 text-gray-300 mx-auto mb-4" />
                     <p className="text-xl font-semibold text-gray-600 mb-2">No B2C Advisory Data</p>
                     <p className="text-gray-500">B2C advisor performance will appear here once data is available</p>
+                  </div>
+                )}
+
+                {/* Pagination Controls */}
+                {totalPagesB2C > 1 && (
+                  <div className="flex items-center justify-between mt-6 pt-6 border-t border-gray-200">
+                    <button
+                      onClick={() => setB2cPage(p => Math.max(1, p - 1))}
+                      disabled={b2cPage === 1}
+                      className="flex items-center space-x-2 px-4 py-2.5 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      <span>Previous</span>
+                    </button>
+                    <div className="flex items-center space-x-2">
+                      {Array.from({ length: Math.min(totalPagesB2C, 7) }, (_, i) => {
+                        let pageNum: number;
+                        if (totalPagesB2C <= 7) {
+                          pageNum = i + 1;
+                        } else if (b2cPage <= 4) {
+                          pageNum = i + 1;
+                        } else if (b2cPage >= totalPagesB2C - 3) {
+                          pageNum = totalPagesB2C - 6 + i;
+                        } else {
+                          pageNum = b2cPage - 3 + i;
+                        }
+                        return (
+                          <button
+                            key={pageNum}
+                            onClick={() => setB2cPage(pageNum)}
+                            className={`w-9 h-9 text-sm font-medium rounded-lg transition-colors ${
+                              b2cPage === pageNum
+                                ? 'bg-blue-600 text-white shadow-md'
+                                : 'text-gray-600 hover:bg-gray-100'
+                            }`}
+                          >
+                            {pageNum}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <button
+                      onClick={() => setB2cPage(p => Math.min(totalPagesB2C, p + 1))}
+                      disabled={b2cPage === totalPagesB2C}
+                      className="flex items-center space-x-2 px-4 py-2.5 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg border border-blue-200 transition-colors"
+                    >
+                      <span>{b2cPage === totalPagesB2C ? 'Last Page' : 'Next Advisors'}</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
                   </div>
                 )}
               </div>
@@ -712,7 +853,8 @@ export default function DashboardPage() {
                 </div>
               )}
             </div>
-          )}
+            );
+          })()}
 
           {activeTab === 'PW' && (
             <div>

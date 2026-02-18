@@ -157,7 +157,7 @@ export async function GET() {
         mtdSales: emp.mtd.total.toFixed(2),
         ytdSales: emp.ytdTotal.total.toFixed(2),
       })),
-      allEmployeeSales: employeeSales.slice(0, 20), // First 20 for preview
+      allEmployeeSales: employeeSales.map((emp, index) => ({ ...emp, rank: index + 1 })),
     });
   } catch (error: any) {
     return NextResponse.json({

@@ -80,7 +80,7 @@ export async function GET() {
         assignedLeads: Math.round(adv.assignedLeads),
         newSIPInflowYTD: adv.newSIPInflowYTD.toFixed(3),
       })),
-      allAdvisors: advisors.slice(0, 20), // First 20 for preview
+      allAdvisors: advisors.map((adv, index) => ({ ...adv, rank: index + 1 })),
     });
   } catch (error: any) {
     return NextResponse.json({

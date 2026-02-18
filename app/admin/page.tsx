@@ -8,6 +8,7 @@ import {
   CheckCircle, Trash2, Plus, LogIn, ChevronRight, X,
   Upload, FileSpreadsheet, Eye, RefreshCw, AlertTriangle,
   UserPlus, UserMinus, UserCheck, ChevronDown, ChevronUp,
+  Download, History, ChevronLeft, Filter,
 } from 'lucide-react';
 
 // ── Role definitions ──────────────────────────────────────────────────────────
@@ -56,19 +57,23 @@ const TIER_COLORS: Record<string, string> = {
 };
 
 // ── Sidebar nav items ─────────────────────────────────────────────────────────
-type SectionId = 'user-mgmt' | 'impersonate' | 'b2b' | 'b2c' | 'pw' | 'employees' | 'contests';
+type SectionId = 'user-mgmt' | 'impersonate' | 'b2b' | 'b2c' | 'pw' | 'employees' | 'contests' | 'activity-log';
 
 interface NavItem { id: SectionId; label: string; icon: any; roleIds?: number[]; devOnly?: boolean; assignAdminsOnly?: boolean; }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: 'user-mgmt',   label: 'User Management',  icon: UserCog,    assignAdminsOnly: true },
-  { id: 'impersonate', label: 'Impersonate User',  icon: LogIn,      devOnly: true },
-  { id: 'b2b',         label: 'B2B Data',          icon: BarChart2,  roleIds: [1,2,5,6,12] },
-  { id: 'b2c',         label: 'B2C Data',          icon: TrendingUp, roleIds: [3,7] },
-  { id: 'pw',          label: 'Private Wealth',    icon: Briefcase,  roleIds: [8,9,10,13] },
-  { id: 'employees',   label: 'Employees',         icon: Users,      roleIds: [4] },
-  { id: 'contests',    label: 'Contests',          icon: Trophy,     roleIds: [11] },
+  { id: 'user-mgmt',    label: 'User Management',  icon: UserCog,    assignAdminsOnly: true },
+  { id: 'impersonate',  label: 'Impersonate User',  icon: LogIn,      devOnly: true },
+  { id: 'b2b',          label: 'B2B Data',          icon: BarChart2,  roleIds: [1,2,5,6,12] },
+  { id: 'b2c',          label: 'B2C Data',          icon: TrendingUp, roleIds: [3,7] },
+  { id: 'pw',           label: 'Private Wealth',    icon: Briefcase,  roleIds: [8,9,10,13] },
+  { id: 'employees',    label: 'Employees',         icon: Users,      roleIds: [4] },
+  { id: 'contests',     label: 'Contests',          icon: Trophy,     roleIds: [11] },
+  { id: 'activity-log', label: 'Activity Log',      icon: History,    devOnly: false, assignAdminsOnly: false },
 ];
+
+// Tiers that can see activity log (dev, super, co — not vertical)
+const ACTIVITY_LOG_TIERS = ['dev', 'super', 'co'];
 
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function AdminPage() {
@@ -102,6 +107,7 @@ export default function AdminPage() {
 
   const getVisibleSections = (role: any) => {
     return NAV_ITEMS.filter(item => {
+      if (item.id === 'activity-log') return ACTIVITY_LOG_TIERS.includes(role.tier);
       if (item.devOnly) return role.can_impersonate;
       if (item.assignAdminsOnly) return role.can_assign_admins;
       if (item.roleIds) return item.roleIds.some((r: number) => role.roles?.includes(r));
@@ -192,6 +198,8 @@ export default function AdminPage() {
               roles={[1, 2, 5, 6, 12]}
               adminRoles={adminRole.roles}
               showToast={showToast}
+              downloadVertical={adminRole.tier === 'vertical' ? adminRole.vertical : 'all'}
+              adminTier={adminRole.tier}
             />
           )}
           {activeSection === 'b2c' && (
@@ -201,6 +209,8 @@ export default function AdminPage() {
               roles={[3, 7]}
               adminRoles={adminRole.roles}
               showToast={showToast}
+              downloadVertical={adminRole.tier === 'vertical' ? adminRole.vertical : 'all'}
+              adminTier={adminRole.tier}
             />
           )}
           {activeSection === 'pw' && (
@@ -210,6 +220,8 @@ export default function AdminPage() {
               roles={[8, 9, 10, 13]}
               adminRoles={adminRole.roles}
               showToast={showToast}
+              downloadVertical={adminRole.tier === 'vertical' ? adminRole.vertical : 'all'}
+              adminTier={adminRole.tier}
             />
           )}
           {activeSection === 'employees' && (
@@ -219,7 +231,12 @@ export default function AdminPage() {
               roles={[4]}
               adminRoles={adminRole.roles}
               showToast={showToast}
+              downloadVertical="all"
+              adminTier={adminRole.tier}
             />
+          )}
+          {activeSection === 'activity-log' && (
+            <ActivityLogSection adminTier={adminRole.tier} showToast={showToast} />
           )}
           {activeSection === 'contests' && (
             <ComingSoonSection title="Contest Management" description="Create, edit, and manage Hall of Fame contests." />
@@ -243,20 +260,68 @@ export default function AdminPage() {
 
 // ── Data Section (wraps upload panels for each role) ──────────────────────────
 function DataSection({
-  title, description, roles, adminRoles, showToast,
+  title, description, roles, adminRoles, showToast, downloadVertical, adminTier,
 }: {
   title: string;
   description: string;
   roles: number[];
   adminRoles: number[];
   showToast: Function;
+  downloadVertical: string;
+  adminTier: string;
 }) {
   const allowedRoles = roles.filter(r => adminRoles?.includes(r));
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownloadCSV = async () => {
+    setDownloading(true);
+    try {
+      const res = await fetch('/api/admin/export-employees');
+      if (!res.ok) {
+        const err = await res.json();
+        showToast('error', err.error || 'Download failed');
+        setDownloading(false);
+        return;
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const match = disposition.match(/filename="(.+?)"/);
+      const filename = match ? match[1] : `employees_${new Date().toISOString().slice(0,10)}.csv`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      showToast('success', `Downloaded ${filename}`);
+    } catch {
+      showToast('error', 'Download failed — please try again');
+    }
+    setDownloading(false);
+  };
 
   return (
     <div>
-      <h2 className="text-2xl font-bold text-gray-900 mb-1">{title}</h2>
-      <p className="text-sm text-gray-500 mb-6">{description}</p>
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-1">{title}</h2>
+          <p className="text-sm text-gray-500">{description}</p>
+        </div>
+        {/* Download Employee CSV button — always visible in data sections */}
+        <button
+          onClick={handleDownloadCSV}
+          disabled={downloading}
+          className="flex items-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white text-sm font-medium rounded-lg transition-colors shadow-sm shrink-0 ml-6"
+          title={`Download employee data CSV${downloadVertical !== 'all' ? ` for ${downloadVertical}` : ' for all verticals'}`}
+        >
+          {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+          <span>
+            {downloading ? 'Downloading...' : `Download Employee CSV${downloadVertical !== 'all' ? ` (${downloadVertical})` : ''}`}
+          </span>
+        </button>
+      </div>
 
       <div className="space-y-6">
         {allowedRoles.map(roleId => {
@@ -1232,6 +1297,217 @@ function ImpersonateSection({ showToast, router }: { showToast: Function; router
           <span>{loading ? 'Switching session...' : 'Sign in as this user'}</span>
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Action type labels ────────────────────────────────────────────────────────
+const ACTION_TYPE_LABELS: Record<string, { label: string; color: string }> = {
+  login:                 { label: 'Login',              color: 'bg-blue-100 text-blue-700' },
+  logout:                { label: 'Logout',             color: 'bg-gray-100 text-gray-600' },
+  password_set:          { label: 'Password Set',       color: 'bg-green-100 text-green-700' },
+  password_reset:        { label: 'Password Reset',     color: 'bg-yellow-100 text-yellow-700' },
+  employee_upload:       { label: 'Employee Upload',    color: 'bg-indigo-100 text-indigo-700' },
+  employee_export_csv:   { label: 'CSV Export',         color: 'bg-emerald-100 text-emerald-700' },
+  b2b_mtd_upload:        { label: 'B2B MTD Upload',     color: 'bg-purple-100 text-purple-700' },
+  b2b_ytd_upload:        { label: 'B2B YTD Upload',     color: 'bg-purple-100 text-purple-700' },
+  b2c_upload:            { label: 'B2C Upload',         color: 'bg-cyan-100 text-cyan-700' },
+  admin_role_assigned:   { label: 'Role Assigned',      color: 'bg-orange-100 text-orange-700' },
+  admin_role_removed:    { label: 'Role Removed',       color: 'bg-red-100 text-red-700' },
+  impersonation_start:   { label: 'Impersonation',      color: 'bg-amber-100 text-amber-700' },
+  impersonation_end:     { label: 'Impersonation End',  color: 'bg-gray-100 text-gray-600' },
+};
+
+const FILTER_OPTIONS = [
+  { value: 'all',               label: 'All Actions' },
+  { value: 'login',             label: 'Logins' },
+  { value: 'logout',            label: 'Logouts' },
+  { value: 'employee_upload',   label: 'Employee Uploads' },
+  { value: 'employee_export_csv', label: 'CSV Exports' },
+  { value: 'b2b_mtd_upload',   label: 'B2B MTD Uploads' },
+  { value: 'b2b_ytd_upload',   label: 'B2B YTD Uploads' },
+  { value: 'b2c_upload',       label: 'B2C Uploads' },
+  { value: 'password_set',     label: 'Password Events' },
+];
+
+// ── Activity Log Section ──────────────────────────────────────────────────────
+function ActivityLogSection({ adminTier, showToast }: { adminTier: string; showToast: Function }) {
+  const [logs, setLogs] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [page, setPage] = useState(1);
+  const [filter, setFilter] = useState('all');
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const LIMIT = 25;
+
+  const fetchLogs = async (pg: number, f: string) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/activity-logs?page=${pg}&limit=${LIMIT}&filter=${f}`);
+      const data = await res.json();
+      if (!res.ok) {
+        showToast('error', data.error || 'Failed to load logs');
+        setLoading(false);
+        return;
+      }
+      setLogs(data.logs || []);
+      setTotal(data.total || 0);
+      setTotalPages(data.totalPages || 1);
+    } catch {
+      showToast('error', 'Network error loading logs');
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchLogs(page, filter); }, [page, filter]);
+
+  const handleFilterChange = (f: string) => { setFilter(f); setPage(1); };
+
+  const formatTs = (ts: string) => {
+    const d = new Date(ts);
+    return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-1">Activity Log</h2>
+          <p className="text-sm text-gray-500">Historical log of all user actions — {total.toLocaleString()} total events</p>
+        </div>
+        <button
+          onClick={() => fetchLogs(page, filter)}
+          disabled={loading}
+          className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          <span>Refresh</span>
+        </button>
+      </div>
+
+      {/* Filter Bar */}
+      <div className="flex items-center space-x-2 mb-4 overflow-x-auto pb-1">
+        <Filter className="w-4 h-4 text-gray-400 shrink-0" />
+        {FILTER_OPTIONS.map(opt => (
+          <button
+            key={opt.value}
+            onClick={() => handleFilterChange(opt.value)}
+            className={`text-xs font-medium px-3 py-1.5 rounded-full whitespace-nowrap transition-colors ${
+              filter === opt.value
+                ? 'bg-indigo-600 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Log Table */}
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+          </div>
+        ) : logs.length === 0 ? (
+          <div className="text-center py-16 text-gray-400">
+            <History className="w-10 h-10 mx-auto mb-3 opacity-30" />
+            <p>No activity logs found</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {/* Header */}
+            <div className="grid grid-cols-12 gap-4 px-5 py-3 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              <div className="col-span-2">Time</div>
+              <div className="col-span-2">Action</div>
+              <div className="col-span-3">User</div>
+              <div className="col-span-2">Employee</div>
+              <div className="col-span-2">Business Unit</div>
+              <div className="col-span-1">Details</div>
+            </div>
+
+            {logs.map(log => {
+              const actionMeta = ACTION_TYPE_LABELS[log.action_type] || { label: log.action_type, color: 'bg-gray-100 text-gray-600' };
+              const emp = log.user?.employee;
+              const isExpanded = expanded === log.id;
+
+              return (
+                <div key={log.id}>
+                  <div
+                    className="grid grid-cols-12 gap-4 px-5 py-3.5 hover:bg-gray-50 transition-colors cursor-pointer text-sm"
+                    onClick={() => setExpanded(isExpanded ? null : log.id)}
+                  >
+                    <div className="col-span-2 text-xs text-gray-500 font-mono">
+                      {formatTs(log.created_at)}
+                    </div>
+                    <div className="col-span-2">
+                      <span className={`text-xs font-semibold px-2 py-1 rounded-full ${actionMeta.color}`}>
+                        {actionMeta.label}
+                      </span>
+                    </div>
+                    <div className="col-span-3 truncate">
+                      <p className="text-gray-800 text-xs font-medium truncate">{log.user?.email || log.user_id || '—'}</p>
+                    </div>
+                    <div className="col-span-2 truncate">
+                      <p className="text-gray-700 text-xs truncate">{emp?.full_name || '—'}</p>
+                      <p className="text-gray-400 text-xs">{emp?.employee_number || ''}</p>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-gray-600 text-xs">{emp?.business_unit || '—'}</p>
+                    </div>
+                    <div className="col-span-1 flex justify-end">
+                      {log.action_details && (
+                        isExpanded
+                          ? <ChevronUp className="w-4 h-4 text-gray-400" />
+                          : <ChevronDown className="w-4 h-4 text-gray-400" />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Expanded details */}
+                  {isExpanded && log.action_details && (
+                    <div className="px-5 py-3 bg-slate-50 border-t border-gray-100">
+                      <p className="text-xs font-semibold text-gray-500 mb-2">Action Details</p>
+                      <pre className="text-xs text-gray-700 font-mono bg-white border border-gray-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap">
+                        {JSON.stringify(log.action_details, null, 2)}
+                      </pre>
+                      {log.ip_address && (
+                        <p className="text-xs text-gray-400 mt-2">IP: {log.ip_address}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between mt-5">
+          <button
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page === 1 || loading}
+            className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            <span>Previous</span>
+          </button>
+          <span className="text-sm text-gray-500">
+            Page <strong>{page}</strong> of <strong>{totalPages}</strong> — {total.toLocaleString()} total
+          </span>
+          <button
+            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages || loading}
+            className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg border border-indigo-200 transition-colors"
+          >
+            <span>Next</span>
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
