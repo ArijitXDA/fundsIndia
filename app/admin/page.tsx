@@ -8,8 +8,9 @@ import {
   CheckCircle, Trash2, Plus, LogIn, ChevronRight, X,
   Upload, FileSpreadsheet, Eye, RefreshCw, AlertTriangle,
   UserPlus, UserMinus, UserCheck, ChevronDown, ChevronUp,
-  Download, History, ChevronLeft, Filter,
+  Download, History, ChevronLeft, Filter, Bot,
 } from 'lucide-react';
+import AgentManagement from '@/components/AgentManagement';
 
 // ── Role definitions ──────────────────────────────────────────────────────────
 const ROLE_LABELS: Record<number, string> = {
@@ -57,7 +58,7 @@ const TIER_COLORS: Record<string, string> = {
 };
 
 // ── Sidebar nav items ─────────────────────────────────────────────────────────
-type SectionId = 'user-mgmt' | 'impersonate' | 'b2b' | 'b2c' | 'pw' | 'employees' | 'contests' | 'activity-log';
+type SectionId = 'user-mgmt' | 'impersonate' | 'b2b' | 'b2c' | 'pw' | 'employees' | 'contests' | 'activity-log' | 'agent';
 
 interface NavItem { id: SectionId; label: string; icon: any; roleIds?: number[]; devOnly?: boolean; assignAdminsOnly?: boolean; }
 
@@ -70,6 +71,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'employees',    label: 'Employees',         icon: Users,      roleIds: [4] },
   { id: 'contests',     label: 'Contests',          icon: Trophy,     roleIds: [11] },
   { id: 'activity-log', label: 'Activity Log',      icon: History,    devOnly: false, assignAdminsOnly: false },
+  { id: 'agent',        label: 'FundsAgent',        icon: Bot,        devOnly: true },
 ];
 
 // Tiers that can see activity log (dev, super, co — not vertical)
@@ -240,6 +242,9 @@ export default function AdminPage() {
           )}
           {activeSection === 'contests' && (
             <ComingSoonSection title="Contest Management" description="Create, edit, and manage Hall of Fame contests." />
+          )}
+          {activeSection === 'agent' && (
+            <AgentManagement showToast={showToast} />
           )}
         </main>
       </div>
