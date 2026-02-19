@@ -3,6 +3,10 @@
 // Each tool is a typed data-fetching function that enforces row_scope from
 // agent_access before returning data. The GPT-4o function-calling layer maps
 // tool names to these implementations.
+//
+// IMPORTANT: Column names match the LIVE Supabase schema exactly.
+// B2B tables use raw CSV headers with spaces/brackets (e.g. "RM Emp ID").
+// B2C table is named "b2c" and uses bracketed column names.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { supabaseAdmin } from '@/lib/supabase';
@@ -11,7 +15,8 @@ import { supabaseAdmin } from '@/lib/supabase';
 
 /**
  * Resolve the effective employee ID filter based on row_scope token.
- * Returns an array of employee_numbers the user is allowed to see.
+ * Returns an array of employee_numbers the user is allowed to see,
+ * or 'all' for unrestricted access.
  */
 async function resolveAllowedEmployeeNumbers(
   employeeNumber: string,
@@ -20,11 +25,9 @@ async function resolveAllowedEmployeeNumbers(
   const scope = rowScope?.default ?? 'own_only';
 
   if (scope === 'all') return 'all';
-
   if (scope === 'own_only') return [employeeNumber];
 
   if (scope === 'own_and_team' || scope === 'vertical_only') {
-    // Fetch full org tree
     const EMP_PAGE = 1000;
     let allEmployees: any[] = [];
     let page = 0;
@@ -41,7 +44,6 @@ async function resolveAllowedEmployeeNumbers(
       page++;
     }
 
-    // Build manager → children map
     const empMap = new Map<string, string[]>();
     for (const emp of allEmployees) {
       if (emp.reporting_manager_emp_number) {
@@ -51,7 +53,6 @@ async function resolveAllowedEmployeeNumbers(
       }
     }
 
-    // Recursively collect all downstream IDs
     function getAllDownstream(id: string): string[] {
       const direct = empMap.get(id) ?? [];
       const all = [...direct];
@@ -63,21 +64,69 @@ async function resolveAllowedEmployeeNumbers(
     const ids = [employeeNumber, ...downstream];
 
     if (scope === 'vertical_only') {
-      // Further filter to same business_unit as the requesting employee
       const myEmp = allEmployees.find(e => e.employee_number === employeeNumber);
       if (myEmp) {
         const myBU = myEmp.business_unit;
-        const buFiltered = allEmployees
+        return allEmployees
           .filter(e => ids.includes(e.employee_number) && e.business_unit === myBU)
           .map(e => e.employee_number);
-        return buFiltered;
       }
     }
 
     return ids;
   }
 
-  return [employeeNumber]; // safe default
+  return [employeeNumber];
+}
+
+// ── B2B column name helpers (raw CSV headers) ─────────────────────────────────
+
+// B2B MTD table: b2b_sales_current_month
+const B2B_MTD_COLS = `"RM Emp ID", "Partner Name", "MF+SIF+MSCI", "COB (100%)", "AIF+PMS+LAS+DYNAMO (TRAIL)", "ALTERNATE", "Total Net Sales (COB 100%)", "Branch", "Zone"`;
+
+// B2B YTD table: btb_sales_YTD_minus_current_month
+const B2B_YTD_COLS = `"RM Emp ID", "Partner Name", "MF+SIF+MSCI", "SUM of COB (100%)", "SUM of AIF+PMS+LAS (TRAIL)", "SUM of ALT", "Total Net Sales (COB 100%)", "Branch", "Zone"`;
+
+function parseMtdRow(row: any) {
+  return {
+    emp_id:   String(row['RM Emp ID'] || '').trim(),
+    name:     String(row['Partner Name'] || '').trim(),
+    zone:     String(row['Zone'] || '').trim(),
+    branch:   String(row['Branch'] || '').trim(),
+    mf_sif_msci:       parseFloat(row['MF+SIF+MSCI'] || 0) || 0,
+    cob100:            parseFloat(row['COB (100%)'] || 0) || 0,
+    aif_pms_las:       parseFloat(row['AIF+PMS+LAS+DYNAMO (TRAIL)'] || 0) || 0,
+    alternate:         parseFloat(row['ALTERNATE'] || 0) || 0,
+    total:             parseFloat(row['Total Net Sales (COB 100%)'] || 0) || 0,
+  };
+}
+
+function parseYtdRow(row: any) {
+  return {
+    emp_id:   String(row['RM Emp ID'] || '').trim(),
+    name:     String(row['Partner Name'] || '').trim(),
+    zone:     String(row['Zone'] || '').trim(),
+    branch:   String(row['Branch'] || '').trim(),
+    mf_sif_msci:   parseFloat(row['MF+SIF+MSCI'] || 0) || 0,
+    cob100:        parseFloat(row['SUM of COB (100%)'] || row['COB (100%)'] || 0) || 0,
+    aif_pms_las:   parseFloat(row['SUM of AIF+PMS+LAS (TRAIL)'] || row['AIF+PMS+LAS+DYNAMO (TRAIL)'] || 0) || 0,
+    alternate:     parseFloat(row['SUM of ALT'] || row['ALTERNATE'] || 0) || 0,
+    total:         parseFloat(row['Total Net Sales (COB 100%)'] || 0) || 0,
+  };
+}
+
+// B2C column name helper
+function parseB2cRow(row: any) {
+  return {
+    advisor_email:     String(row['advisor'] || '').trim().toLowerCase(),
+    team:              String(row['team'] || '').trim(),
+    net_inflow_mtd:    parseFloat(row['net_inflow_mtd[cr]'] || 0) || 0,
+    net_inflow_ytd:    parseFloat(row['net_inflow_ytd[cr]'] || 0) || 0,
+    current_aum:       parseFloat(row['current_aum_mtm [cr.]'] || 0) || 0,
+    aum_growth_pct:    parseFloat(row['aum_growth_mtm %'] || 0) || 0,
+    assigned_leads:    parseInt(row['assigned_leads'] || 0) || 0,
+    new_sip_inflow_ytd: parseFloat(row['new_sip_inflow_ytd[cr.]'] || 0) || 0,
+  };
 }
 
 // ─── Tool Definitions for OpenAI Function Calling ────────────────────────────
@@ -87,7 +136,7 @@ export const AGENT_TOOLS = [
     type: 'function' as const,
     function: {
       name: 'get_my_performance',
-      description: 'Get the current user\'s own sales performance — MTD and YTD breakdown for B2B (MF+SIF+MSCI, COB100, AIF+PMS+LAS+DYNAMO, Alternate) or B2C (Net Inflow, AUM, SIP Inflow). Also returns target vs actual if available.',
+      description: 'Get the current user\'s own sales performance — MTD and YTD breakdown for B2B (MF+SIF+MSCI, COB100, AIF+PMS+LAS+DYNAMO, Alternate) or B2C (Net Inflow, AUM, SIP Inflow).',
       parameters: {
         type: 'object',
         properties: {
@@ -105,7 +154,7 @@ export const AGENT_TOOLS = [
     type: 'function' as const,
     function: {
       name: 'get_team_performance',
-      description: 'Get aggregated performance data for the user\'s team (direct and indirect reportees). Returns individual rows sorted by MTD sales descending. Useful for managers and CEOs.',
+      description: 'Get aggregated performance data for the user\'s team (direct and indirect reportees). Returns individual rows sorted by MTD sales. Useful for managers and CEOs.',
       parameters: {
         type: 'object',
         properties: {
@@ -132,7 +181,7 @@ export const AGENT_TOOLS = [
     type: 'function' as const,
     function: {
       name: 'get_rankings',
-      description: 'Get leaderboard rankings — overall or filtered by zone, branch, or business unit. Returns rank, name, MTD and YTD figures.',
+      description: 'Get leaderboard rankings — overall or filtered by zone or branch. Returns rank, name, MTD and YTD figures.',
       parameters: {
         type: 'object',
         properties: {
@@ -148,7 +197,7 @@ export const AGENT_TOOLS = [
           },
           filter_zone: {
             type: 'string',
-            description: 'Optional: filter to a specific zone (e.g. "North", "South")',
+            description: 'Optional: filter to a specific zone name',
           },
           limit: {
             type: 'number',
@@ -180,7 +229,7 @@ export const AGENT_TOOLS = [
     type: 'function' as const,
     function: {
       name: 'get_org_structure',
-      description: 'Get the reporting structure for a given employee — their direct reports and chain of command. Useful for org-related questions.',
+      description: 'Get the reporting structure for a given employee — their direct reports and chain of command.',
       parameters: {
         type: 'object',
         properties: {
@@ -190,7 +239,7 @@ export const AGENT_TOOLS = [
           },
           depth: {
             type: 'number',
-            description: 'How many levels down to fetch. Default: 2 (direct + 1 more)',
+            description: 'How many levels down to fetch. Default: 2',
           },
         },
         required: [],
@@ -201,7 +250,7 @@ export const AGENT_TOOLS = [
     type: 'function' as const,
     function: {
       name: 'get_proactive_insights',
-      description: 'Run proactive insight checks and return any alerts or opportunities the user should know about — partner inactivity, target gaps, rank changes, team outliers, zone opportunities.',
+      description: 'Run proactive insight checks and return any alerts or opportunities — target gaps, team outliers, ranking summary.',
       parameters: {
         type: 'object',
         properties: {
@@ -220,22 +269,24 @@ export const AGENT_TOOLS = [
   },
 ];
 
-// ─── Tool Implementations ─────────────────────────────────────────────────────
+// ─── Tool Context ─────────────────────────────────────────────────────────────
 
 export interface ToolContext {
   employeeNumber: string;
-  employeeId: string;
-  businessUnit: string;
-  rowScope: Record<string, string> | null;
-  allowedTables: string[] | null;
+  employeeId:     string;
+  businessUnit:   string;
+  workEmail:      string;
+  rowScope:       Record<string, string> | null;
+  allowedTables:  string[] | null;
 }
+
+// ─── Tool Dispatcher ──────────────────────────────────────────────────────────
 
 export async function executeTool(
   toolName: string,
   args: Record<string, any>,
   ctx: ToolContext
 ): Promise<any> {
-  // Check table-level access
   const isTableAllowed = (table: string) => {
     if (!ctx.allowedTables || ctx.allowedTables.length === 0) return true;
     return ctx.allowedTables.includes(table);
@@ -246,7 +297,7 @@ export async function executeTool(
       return await toolGetMyPerformance(args, ctx);
 
     case 'get_team_performance':
-      if (!isTableAllowed('b2b_sales_current_month') && !isTableAllowed('b2c_advisory_current')) {
+      if (!isTableAllowed('b2b_sales_current_month') && !isTableAllowed('b2c')) {
         return { error: 'You do not have access to team performance data.' };
       }
       return await toolGetTeamPerformance(args, ctx);
@@ -271,75 +322,102 @@ export async function executeTool(
 // ── Tool: get_my_performance ──────────────────────────────────────────────────
 
 async function toolGetMyPerformance(args: any, ctx: ToolContext) {
-  const empNum = ctx.employeeNumber;
-  const bu = ctx.businessUnit;
+  const { employeeNumber: empNum, businessUnit: bu, workEmail } = ctx;
 
   if (bu === 'B2B') {
+    // B2B tables key on "RM Emp ID" which is W-prefixed
     const wKey = empNum.startsWith('W') ? empNum : `W${empNum}`;
 
     const [{ data: mtdRows }, { data: ytdRows }] = await Promise.all([
-      supabaseAdmin.from('b2b_sales_current_month').select('*').eq('employee_number', wKey),
-      supabaseAdmin.from('btb_sales_YTD_minus_current_month').select('*').eq('employee_number', wKey),
+      supabaseAdmin.from('b2b_sales_current_month').select(B2B_MTD_COLS).eq('RM Emp ID', wKey),
+      supabaseAdmin.from('btb_sales_YTD_minus_current_month').select(B2B_YTD_COLS).eq('RM Emp ID', wKey),
     ]);
 
-    const mtd = mtdRows?.[0] ?? null;
-    const ytd = ytdRows?.[0] ?? null;
+    // Aggregate all rows for this employee (one row per ARN/partner)
+    const sumMtd = (mtdRows ?? []).reduce((acc: any, row: any) => {
+      const r = parseMtdRow(row);
+      return {
+        mf_sif_msci: acc.mf_sif_msci + r.mf_sif_msci,
+        cob100:      acc.cob100 + r.cob100,
+        aif_pms_las: acc.aif_pms_las + r.aif_pms_las,
+        alternate:   acc.alternate + r.alternate,
+        total:       acc.total + r.total,
+        name:        r.name || acc.name,
+        zone:        r.zone || acc.zone,
+        branch:      r.branch || acc.branch,
+      };
+    }, { mf_sif_msci: 0, cob100: 0, aif_pms_las: 0, alternate: 0, total: 0, name: '', zone: '', branch: '' });
+
+    const sumYtd = (ytdRows ?? []).reduce((acc: any, row: any) => {
+      const r = parseYtdRow(row);
+      return {
+        mf_sif_msci: acc.mf_sif_msci + r.mf_sif_msci,
+        cob100:      acc.cob100 + r.cob100,
+        aif_pms_las: acc.aif_pms_las + r.aif_pms_las,
+        alternate:   acc.alternate + r.alternate,
+        total:       acc.total + r.total,
+      };
+    }, { mf_sif_msci: 0, cob100: 0, aif_pms_las: 0, alternate: 0, total: 0 });
+
+    const hasMtd = (mtdRows ?? []).length > 0;
+    const hasYtd = (ytdRows ?? []).length > 0;
 
     return {
       vertical: 'B2B',
       employee_number: empNum,
-      period_requested: args.period ?? 'both',
-      mtd: mtd ? {
-        mf_sif_msci: mtd.mf_sif_msci ?? 0,
-        cob100: mtd.cob_100 ?? 0,
-        aif_pms_las_dynamo: mtd.aif_pms_las_dynamo ?? 0,
-        alternate: mtd.alternate ?? 0,
-        total: mtd.total ?? 0,
-        partner_name: mtd.partner_name ?? null,
-        zone: mtd.zone ?? null,
-        branch: mtd.branch ?? null,
+      partner_name: sumMtd.name || empNum,
+      zone: sumMtd.zone,
+      branch: sumMtd.branch,
+      mtd: hasMtd ? {
+        mf_sif_msci_cr: sumMtd.mf_sif_msci,
+        cob100_cr:      sumMtd.cob100,
+        aif_pms_las_cr: sumMtd.aif_pms_las,
+        alternate_cr:   sumMtd.alternate,
+        total_cr:       sumMtd.total,
       } : null,
-      ytd: ytd ? {
-        mf_sif_msci: ytd.mf_sif_msci ?? 0,
-        cob100: ytd.cob_100 ?? 0,
-        aif_pms_las_dynamo: ytd.aif_pms_las_dynamo ?? 0,
-        alternate: ytd.alternate ?? 0,
-        total: ytd.total ?? 0,
+      ytd_excluding_current_month: hasYtd ? {
+        mf_sif_msci_cr: sumYtd.mf_sif_msci,
+        cob100_cr:      sumYtd.cob100,
+        aif_pms_las_cr: sumYtd.aif_pms_las,
+        alternate_cr:   sumYtd.alternate,
+        total_cr:       sumYtd.total,
       } : null,
+      ytd_total_cr: hasMtd && hasYtd ? sumMtd.total + sumYtd.total : null,
     };
   }
 
   if (bu === 'B2C') {
-    const email = ctx.employeeNumber; // B2C uses email as key
-    // Fetch by work email from employee record
-    const { data: emp } = await supabaseAdmin
-      .from('employees')
-      .select('work_email')
-      .eq('employee_number', empNum)
-      .single();
-
-    const workEmail = (emp?.work_email ?? '').trim().toLowerCase();
+    // B2C table keys on the advisor column which stores email
+    const emailLower = workEmail.toLowerCase();
 
     const { data: b2cRows } = await supabaseAdmin
-      .from('b2c_advisory_current')
+      .from('b2c')
       .select('*')
-      .ilike('advisor_email', workEmail);
+      .ilike('advisor', emailLower);
 
     const row = b2cRows?.[0] ?? null;
+    if (!row) {
+      return {
+        vertical: 'B2C',
+        employee_number: empNum,
+        message: 'No B2C advisory data found for this email address.',
+        data: null,
+      };
+    }
+
+    const parsed = parseB2cRow(row);
     return {
       vertical: 'B2C',
       employee_number: empNum,
-      data: row ? {
-        advisor_name: row.advisor_name,
-        net_inflow_mtd: row.net_inflow_mtd ?? 0,
-        net_inflow_ytd: row.net_inflow_ytd ?? 0,
-        current_aum: row.current_aum ?? 0,
-        aum_growth_pct: row.aum_growth_pct ?? 0,
-        assigned_leads: row.assigned_leads ?? 0,
-        new_sip_inflow_ytd: row.new_sip_inflow_ytd ?? 0,
-        team: row.team ?? null,
-        zone: row.zone ?? null,
-      } : null,
+      data: {
+        team:               parsed.team,
+        net_inflow_mtd_cr:  parsed.net_inflow_mtd,
+        net_inflow_ytd_cr:  parsed.net_inflow_ytd,
+        current_aum_cr:     parsed.current_aum,
+        aum_growth_pct:     parsed.aum_growth_pct,
+        assigned_leads:     parsed.assigned_leads,
+        new_sip_inflow_ytd_cr: parsed.new_sip_inflow_ytd,
+      },
     };
   }
 
@@ -351,7 +429,7 @@ async function toolGetMyPerformance(args: any, ctx: ToolContext) {
 async function toolGetTeamPerformance(args: any, ctx: ToolContext) {
   const allowed = await resolveAllowedEmployeeNumbers(ctx.employeeNumber, ctx.rowScope);
 
-  if (allowed !== 'all' && allowed.length <= 1) {
+  if (allowed !== 'all' && (allowed as string[]).length <= 1) {
     return {
       message: 'No team members found under your profile, or your access level restricts team data.',
       team_size: 0,
@@ -360,68 +438,97 @@ async function toolGetTeamPerformance(args: any, ctx: ToolContext) {
   }
 
   const limit = args.limit ?? 20;
-  const sortBy = args.sort_by ?? 'mtd_desc';
-  const period = args.period ?? 'MTD';
+  const sortBy: string = args.sort_by ?? 'mtd_desc';
 
-  // Build W-prefixed keys
+  // Build W-prefixed keys for B2B lookup
   const wKeys = allowed === 'all'
-    ? undefined
+    ? null
     : (allowed as string[]).map(id => id.startsWith('W') ? id : `W${id}`);
 
-  let query = supabaseAdmin
-    .from('b2b_sales_current_month')
-    .select('employee_number, partner_name, zone, branch, mf_sif_msci, cob_100, aif_pms_las_dynamo, alternate, total');
-
-  if (wKeys) {
-    query = query.in('employee_number', wKeys);
-  }
-
   if (sortBy.includes('ytd')) {
-    // For YTD we need a different table
-    let ytdQuery = supabaseAdmin
-      .from('btb_sales_YTD_minus_current_month')
-      .select('employee_number, partner_name, zone, branch, mf_sif_msci, cob_100, aif_pms_las_dynamo, alternate, total');
-    if (wKeys) ytdQuery = ytdQuery.in('employee_number', wKeys);
-    if (sortBy === 'ytd_desc') ytdQuery = ytdQuery.order('total', { ascending: false });
-    else ytdQuery = ytdQuery.order('total', { ascending: true });
-    const { data: ytdData } = await ytdQuery.limit(limit);
-    return {
-      period: 'YTD',
-      team_size: (allowed === 'all' ? 'all' : allowed.length),
-      members: (ytdData ?? []).map(r => ({
-        employee_number: r.employee_number,
-        name: r.partner_name,
+    let q = supabaseAdmin.from('btb_sales_YTD_minus_current_month').select(B2B_YTD_COLS);
+    if (wKeys) q = q.in('RM Emp ID', wKeys);
+    const { data } = await q.limit(limit * 3); // over-fetch to allow aggregation
+
+    // Aggregate by emp ID
+    const byEmp = new Map<string, any>();
+    for (const row of (data ?? [])) {
+      const r = parseYtdRow(row);
+      if (!r.emp_id || r.emp_id === '#N/A') continue;
+      if (!byEmp.has(r.emp_id)) byEmp.set(r.emp_id, { ...r });
+      else {
+        const e = byEmp.get(r.emp_id)!;
+        e.mf_sif_msci += r.mf_sif_msci;
+        e.cob100      += r.cob100;
+        e.aif_pms_las += r.aif_pms_las;
+        e.alternate   += r.alternate;
+        e.total       += r.total;
+      }
+    }
+
+    const members = Array.from(byEmp.values())
+      .sort((a, b) => sortBy === 'ytd_asc' ? a.total - b.total : b.total - a.total)
+      .slice(0, limit)
+      .map((r, i) => ({
+        rank: i + 1,
+        employee_number: r.emp_id,
+        name: r.name,
         zone: r.zone,
         branch: r.branch,
-        total_ytd: r.total,
-        mf_sif_msci: r.mf_sif_msci,
-        cob100: r.cob_100,
-        aif_pms_las_dynamo: r.aif_pms_las_dynamo,
-        alternate: r.alternate,
-      })),
+        ytd_total_cr: r.total,
+        mf_sif_msci_cr: r.mf_sif_msci,
+        cob100_cr: r.cob100,
+        aif_pms_las_cr: r.aif_pms_las,
+        alternate_cr: r.alternate,
+      }));
+
+    return {
+      period: 'YTD',
+      team_size: allowed === 'all' ? 'all' : (allowed as string[]).length,
+      members,
     };
   }
 
-  if (sortBy === 'mtd_desc' || sortBy === 'MTD') query = query.order('total', { ascending: false });
-  else if (sortBy === 'mtd_asc') query = query.order('total', { ascending: true });
-  else if (sortBy === 'name') query = query.order('partner_name');
+  // MTD (default)
+  let q = supabaseAdmin.from('b2b_sales_current_month').select(B2B_MTD_COLS);
+  if (wKeys) q = q.in('RM Emp ID', wKeys);
+  const { data } = await q.limit(limit * 3);
 
-  const { data: mtdData } = await query.limit(limit);
+  const byEmp = new Map<string, any>();
+  for (const row of (data ?? [])) {
+    const r = parseMtdRow(row);
+    if (!r.emp_id || r.emp_id === '#N/A') continue;
+    if (!byEmp.has(r.emp_id)) byEmp.set(r.emp_id, { ...r });
+    else {
+      const e = byEmp.get(r.emp_id)!;
+      e.mf_sif_msci += r.mf_sif_msci;
+      e.cob100      += r.cob100;
+      e.aif_pms_las += r.aif_pms_las;
+      e.alternate   += r.alternate;
+      e.total       += r.total;
+    }
+  }
+
+  const members = Array.from(byEmp.values())
+    .sort((a, b) => sortBy === 'mtd_asc' ? a.total - b.total : sortBy === 'name' ? a.name.localeCompare(b.name) : b.total - a.total)
+    .slice(0, limit)
+    .map((r, i) => ({
+      rank: i + 1,
+      employee_number: r.emp_id,
+      name: r.name,
+      zone: r.zone,
+      branch: r.branch,
+      mtd_total_cr: r.total,
+      mf_sif_msci_cr: r.mf_sif_msci,
+      cob100_cr: r.cob100,
+      aif_pms_las_cr: r.aif_pms_las,
+      alternate_cr: r.alternate,
+    }));
 
   return {
     period: 'MTD',
     team_size: allowed === 'all' ? 'all' : (allowed as string[]).length,
-    members: (mtdData ?? []).map(r => ({
-      employee_number: r.employee_number,
-      name: r.partner_name,
-      zone: r.zone,
-      branch: r.branch,
-      total_mtd: r.total,
-      mf_sif_msci: r.mf_sif_msci,
-      cob100: r.cob_100,
-      aif_pms_las_dynamo: r.aif_pms_las_dynamo,
-      alternate: r.alternate,
-    })),
+    members,
   };
 }
 
@@ -429,57 +536,75 @@ async function toolGetTeamPerformance(args: any, ctx: ToolContext) {
 
 async function toolGetRankings(args: any, ctx: ToolContext) {
   const vertical = args.vertical ?? 'B2B';
-  const sortBy = args.sort_by ?? 'MTD';
-  const limit = Math.min(args.limit ?? 10, 50);
+  const sortBy   = args.sort_by ?? 'MTD';
+  const limit    = Math.min(args.limit ?? 10, 50);
 
   if (vertical === 'B2C') {
-    let query = supabaseAdmin
-      .from('b2c_advisory_current')
-      .select('advisor_name, team, zone, net_inflow_mtd, net_inflow_ytd, current_aum');
+    const { data } = await supabaseAdmin
+      .from('b2c')
+      .select('advisor, team, "net_inflow_mtd[cr]", "net_inflow_ytd[cr]", "current_aum_mtm [cr.]"')
+      .limit(200);
 
-    if (sortBy === 'MTD') query = query.order('net_inflow_mtd', { ascending: false });
-    else query = query.order('net_inflow_ytd', { ascending: false });
-
-    const { data } = await query.limit(limit);
+    const parsed = (data ?? []).map(parseB2cRow);
+    const sorted = parsed.sort((a, b) =>
+      sortBy === 'YTD'
+        ? b.net_inflow_ytd - a.net_inflow_ytd
+        : b.net_inflow_mtd - a.net_inflow_mtd
+    ).slice(0, limit);
 
     return {
       vertical: 'B2C',
       sort_by: sortBy,
-      rankings: (data ?? []).map((r, i) => ({
+      rankings: sorted.map((r, i) => ({
         rank: i + 1,
-        name: r.advisor_name,
+        advisor_email: r.advisor_email,
         team: r.team,
-        zone: r.zone,
-        net_inflow_mtd: r.net_inflow_mtd,
-        net_inflow_ytd: r.net_inflow_ytd,
-        current_aum: r.current_aum,
+        net_inflow_mtd_cr: r.net_inflow_mtd,
+        net_inflow_ytd_cr: r.net_inflow_ytd,
+        current_aum_cr: r.current_aum,
       })),
     };
   }
 
-  // B2B
+  // B2B — fetch the right table, then aggregate by emp ID before ranking
+  const cols = sortBy === 'YTD' ? B2B_YTD_COLS : B2B_MTD_COLS;
   const tableName = sortBy === 'YTD' ? 'btb_sales_YTD_minus_current_month' : 'b2b_sales_current_month';
-  let query = supabaseAdmin
-    .from(tableName)
-    .select('employee_number, partner_name, zone, branch, total')
-    .order('total', { ascending: false });
 
-  if (args.filter_zone) {
-    query = query.ilike('zone', `%${args.filter_zone}%`);
+  let q = supabaseAdmin.from(tableName).select(cols).limit(2000);
+  if (args.filter_zone) q = q.ilike('Zone', `%${args.filter_zone}%`);
+
+  const { data } = await q;
+
+  const byEmp = new Map<string, any>();
+  for (const row of (data ?? [])) {
+    const r = sortBy === 'YTD' ? parseYtdRow(row) : parseMtdRow(row);
+    if (!r.emp_id || r.emp_id === '#N/A') continue;
+    if (!byEmp.has(r.emp_id)) byEmp.set(r.emp_id, { ...r });
+    else {
+      const e = byEmp.get(r.emp_id)!;
+      e.total       += r.total;
+      e.mf_sif_msci += r.mf_sif_msci;
+      e.cob100      += r.cob100;
+      e.aif_pms_las += r.aif_pms_las;
+      e.alternate   += r.alternate;
+    }
   }
 
-  const { data } = await query.limit(limit);
+  const ranked = Array.from(byEmp.values())
+    .sort((a, b) => b.total - a.total)
+    .slice(0, limit);
 
   return {
     vertical: 'B2B',
     sort_by: sortBy,
-    rankings: (data ?? []).map((r, i) => ({
+    total_employees_in_pool: byEmp.size,
+    rankings: ranked.map((r, i) => ({
       rank: i + 1,
-      employee_number: r.employee_number,
-      name: r.partner_name,
+      employee_number: r.emp_id,
+      name: r.name,
       zone: r.zone,
       branch: r.branch,
-      total: r.total,
+      total_cr: r.total,
     })),
   };
 }
@@ -519,7 +644,6 @@ async function toolGetOrgStructure(args: any, ctx: ToolContext) {
   const targetEmpNum = args.employee_number ?? ctx.employeeNumber;
   const depth = Math.min(args.depth ?? 2, 4);
 
-  // Fetch full org
   const EMP_PAGE = 1000;
   let allEmployees: any[] = [];
   let page = 0;
@@ -536,7 +660,7 @@ async function toolGetOrgStructure(args: any, ctx: ToolContext) {
     page++;
   }
 
-  const empMap = new Map(allEmployees.map(e => [e.employee_number, e]));
+  const empMap    = new Map(allEmployees.map(e => [e.employee_number, e]));
   const childrenMap = new Map<string, string[]>();
   for (const emp of allEmployees) {
     if (emp.reporting_manager_emp_number) {
@@ -546,7 +670,7 @@ async function toolGetOrgStructure(args: any, ctx: ToolContext) {
     }
   }
 
-  function buildTree(id: string, currentDepth: number): any {
+  function buildTree(id: string, d: number): any {
     const emp = empMap.get(id);
     if (!emp) return null;
     const node: any = {
@@ -555,27 +679,17 @@ async function toolGetOrgStructure(args: any, ctx: ToolContext) {
       job_title: emp.job_title,
       business_unit: emp.business_unit,
     };
-    if (currentDepth > 0) {
-      const children = childrenMap.get(id) ?? [];
-      if (children.length > 0) {
-        node.direct_reports = children
-          .map(c => buildTree(c, currentDepth - 1))
-          .filter(Boolean);
-        node.direct_reports_count = children.length;
-      } else {
-        node.direct_reports = [];
-        node.direct_reports_count = 0;
-      }
+    const children = childrenMap.get(id) ?? [];
+    node.direct_reports_count = children.length;
+    if (d > 0 && children.length > 0) {
+      node.direct_reports = children.map(c => buildTree(c, d - 1)).filter(Boolean);
     }
     return node;
   }
 
   const target = empMap.get(targetEmpNum);
-  if (!target) {
-    return { error: `Employee ${targetEmpNum} not found` };
-  }
+  if (!target) return { error: `Employee ${targetEmpNum} not found` };
 
-  // Also find who reports to this person's manager
   const manager = target.reporting_manager_emp_number
     ? empMap.get(target.reporting_manager_emp_number)
     : null;
@@ -597,69 +711,96 @@ async function toolGetProactiveInsights(args: any, ctx: ToolContext) {
   const runAll = checks.includes('all');
   const insights: any[] = [];
 
-  // 1. Target gap check
+  // 1. Target gap check — uses `targets` table in live schema
   if (runAll || checks.includes('target_gap')) {
     const wKey = ctx.employeeNumber.startsWith('W') ? ctx.employeeNumber : `W${ctx.employeeNumber}`;
-    const [{ data: mtd }, { data: target }] = await Promise.all([
-      supabaseAdmin.from('b2b_sales_current_month').select('total, partner_name').eq('employee_number', wKey).single(),
-      supabaseAdmin.from('b2b_targets_current_month').select('monthly_target').eq('employee_number', wKey).single(),
-    ]);
 
-    if (mtd && target?.monthly_target) {
-      const pct = (mtd.total / target.monthly_target) * 100;
-      if (pct < 50) {
+    // Fetch current MTD performance
+    const { data: mtdRows } = await supabaseAdmin
+      .from('b2b_sales_current_month')
+      .select(B2B_MTD_COLS)
+      .eq('RM Emp ID', wKey);
+
+    const mtdTotal = (mtdRows ?? []).reduce((sum: number, row: any) =>
+      sum + (parseFloat(row['Total Net Sales (COB 100%)'] || 0) || 0), 0
+    );
+
+    // Fetch target from targets table (live schema)
+    const { data: targetRows } = await supabaseAdmin
+      .from('targets')
+      .select('target_value, period_start, period_end')
+      .eq('employee_id', ctx.employeeId)
+      .eq('business_unit', 'B2B')
+      .eq('target_type', 'monthly')
+      .order('period_start', { ascending: false })
+      .limit(1);
+
+    const targetVal = targetRows?.[0]?.target_value;
+
+    if (mtdRows && mtdRows.length > 0) {
+      if (targetVal) {
+        const pct = (mtdTotal / targetVal) * 100;
         insights.push({
           type: 'target_gap',
-          severity: 'high',
-          title: 'Critical target gap',
-          detail: `You are at ${pct.toFixed(1)}% of your monthly target (${mtd.total?.toFixed(2)} Cr of ${target.monthly_target?.toFixed(2)} Cr MTD). Less than half the target achieved.`,
-        });
-      } else if (pct < 80) {
-        insights.push({
-          type: 'target_gap',
-          severity: 'medium',
-          title: 'Target gap alert',
-          detail: `You are at ${pct.toFixed(1)}% of your monthly target (${mtd.total?.toFixed(2)} Cr of ${target.monthly_target?.toFixed(2)} Cr MTD).`,
+          severity: pct < 50 ? 'high' : pct < 80 ? 'medium' : 'low',
+          title: pct < 50 ? 'Critical target gap' : pct < 80 ? 'Target gap alert' : 'On track with target',
+          detail: `You are at ${pct.toFixed(1)}% of your monthly target (${mtdTotal.toFixed(2)} Cr of ${Number(targetVal).toFixed(2)} Cr MTD).`,
+          mtd_cr: mtdTotal,
+          target_cr: targetVal,
+          achievement_pct: pct,
         });
       } else {
         insights.push({
           type: 'target_gap',
-          severity: 'low',
-          title: 'On track with target',
-          detail: `You are at ${pct.toFixed(1)}% of your monthly target. Great progress!`,
+          severity: 'info',
+          title: 'MTD performance',
+          detail: `Your MTD total is ${mtdTotal.toFixed(2)} Cr. No target data found to compare against.`,
+          mtd_cr: mtdTotal,
         });
       }
     }
   }
 
-  // 2. Team outlier check (for managers)
+  // 2. Team outlier check
   if (runAll || checks.includes('team_outlier')) {
     const allowed = await resolveAllowedEmployeeNumbers(ctx.employeeNumber, ctx.rowScope);
 
     if (allowed !== 'all' && (allowed as string[]).length > 1) {
       const wKeys = (allowed as string[]).map(id => id.startsWith('W') ? id : `W${id}`);
+      const myWKey = ctx.employeeNumber.startsWith('W') ? ctx.employeeNumber : `W${ctx.employeeNumber}`;
 
-      const { data: teamData } = await supabaseAdmin
+      const { data } = await supabaseAdmin
         .from('b2b_sales_current_month')
-        .select('employee_number, partner_name, total')
-        .in('employee_number', wKeys)
-        .neq('employee_number', ctx.employeeNumber.startsWith('W') ? ctx.employeeNumber : `W${ctx.employeeNumber}`)
-        .order('total', { ascending: false });
+        .select(B2B_MTD_COLS)
+        .in('RM Emp ID', wKeys);
 
-      if (teamData && teamData.length > 0) {
-        const totals = teamData.map(r => r.total ?? 0);
-        const avg = totals.reduce((a, b) => a + b, 0) / totals.length;
-        const top = teamData[0];
-        const bottom = teamData[teamData.length - 1];
+      // Aggregate by emp
+      const byEmp = new Map<string, any>();
+      for (const row of (data ?? [])) {
+        const r = parseMtdRow(row);
+        if (!r.emp_id || r.emp_id === '#N/A') continue;
+        if (!byEmp.has(r.emp_id)) byEmp.set(r.emp_id, { ...r });
+        else { const e = byEmp.get(r.emp_id)!; e.total += r.total; }
+      }
+
+      const members = Array.from(byEmp.values()).filter(r => r.emp_id !== myWKey);
+
+      if (members.length > 0) {
+        const totals = members.map(r => r.total);
+        const avg = totals.reduce((a: number, b: number) => a + b, 0) / totals.length;
+        const sorted = [...members].sort((a, b) => b.total - a.total);
+        const top = sorted[0];
+        const bottom = sorted[sorted.length - 1];
 
         insights.push({
           type: 'team_outlier',
           severity: 'info',
           title: 'Team performance snapshot',
-          detail: `Team avg MTD: ${avg.toFixed(2)} Cr. Top: ${top.partner_name} (${(top.total ?? 0).toFixed(2)} Cr). Needs attention: ${bottom.partner_name} (${(bottom.total ?? 0).toFixed(2)} Cr).`,
-          top_performer: { name: top.partner_name, total: top.total },
-          bottom_performer: { name: bottom.partner_name, total: bottom.total },
-          team_avg: avg,
+          detail: `Team avg MTD: ${avg.toFixed(2)} Cr. Top: ${top.name} (${top.total.toFixed(2)} Cr). Needs attention: ${bottom.name} (${bottom.total.toFixed(2)} Cr).`,
+          team_size: members.length,
+          team_avg_cr: avg,
+          top_performer: { name: top.name, employee_number: top.emp_id, mtd_cr: top.total },
+          bottom_performer: { name: bottom.name, employee_number: bottom.emp_id, mtd_cr: bottom.total },
         });
       }
     }
@@ -671,20 +812,30 @@ async function toolGetProactiveInsights(args: any, ctx: ToolContext) {
 
     const { data: allMtd } = await supabaseAdmin
       .from('b2b_sales_current_month')
-      .select('employee_number, total')
-      .order('total', { ascending: false });
+      .select(`"RM Emp ID", "Total Net Sales (COB 100%)"`)
+      .limit(5000);
 
     if (allMtd && allMtd.length > 0) {
-      const rank = allMtd.findIndex(r => r.employee_number === wKey);
+      // Aggregate by emp
+      const byEmp = new Map<string, number>();
+      for (const row of allMtd) {
+        const id = String(row['RM Emp ID'] || '').trim();
+        if (!id || id === '#N/A') continue;
+        byEmp.set(id, (byEmp.get(id) ?? 0) + (parseFloat(row['Total Net Sales (COB 100%)'] || 0) || 0));
+      }
+
+      const sorted = Array.from(byEmp.entries()).sort((a, b) => b[1] - a[1]);
+      const rank = sorted.findIndex(([id]) => id === wKey);
+
       if (rank >= 0) {
-        const total = allOf(allMtd).length;
         insights.push({
           type: 'ranking_summary',
           severity: 'info',
           title: 'Your current rank',
-          detail: `You are ranked #${rank + 1} out of ${total} B2B employees by MTD sales.`,
+          detail: `You are ranked #${rank + 1} out of ${sorted.length} B2B employees by MTD sales (${(sorted[rank][1]).toFixed(2)} Cr).`,
           rank: rank + 1,
-          total_employees: total,
+          total_employees: sorted.length,
+          your_mtd_cr: sorted[rank][1],
         });
       }
     }
@@ -696,5 +847,3 @@ async function toolGetProactiveInsights(args: any, ctx: ToolContext) {
     employee_number: ctx.employeeNumber,
   };
 }
-
-function allOf<T>(arr: T[]): T[] { return arr; }

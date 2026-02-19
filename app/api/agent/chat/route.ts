@@ -123,13 +123,21 @@ export async function POST(request: NextRequest) {
     }
 
     // 5. Fetch user memory
-    const { data: memoryRows } = await supabaseAdmin
+    // Live schema uses: key, value, expires_at (not memory_key/memory_value/expiry_at)
+    const { data: rawMemoryRows } = await supabaseAdmin
       .from('agent_memory')
-      .select('memory_key, memory_value, memory_type')
+      .select('key, value, memory_type')
       .eq('employee_id', employee.id)
-      .or(`expiry_at.is.null,expiry_at.gt.${new Date().toISOString()}`)
-      .order('updated_at', { ascending: false })
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+      .order('created_at', { ascending: false })
       .limit(10);
+
+    // Normalise to the interface expected by buildSystemPrompt
+    const memoryRows = (rawMemoryRows ?? []).map(m => ({
+      memory_key: m.key,
+      memory_value: m.value,
+      memory_type: m.memory_type,
+    }));
 
     // 6. Build system prompt
     const scopeDefault = (access.row_scope as any)?.default ?? 'own_only';
@@ -149,8 +157,9 @@ export async function POST(request: NextRequest) {
         systemPromptOverride: persona?.system_prompt_override,
       },
       capabilities: {
-        proactiveInsights: access.override_proactive_insights ?? persona?.can_proactively_surface_insights ?? false,
-        recommendations:   access.override_recommendations ?? persona?.can_make_recommendations ?? false,
+        // Live schema uses override_can_proactively_surface_insights / override_can_make_recommendations
+        proactiveInsights: access.override_can_proactively_surface_insights ?? persona?.can_proactively_surface_insights ?? false,
+        recommendations:   access.override_can_make_recommendations ?? persona?.can_make_recommendations ?? false,
         forecasting:       persona?.can_do_forecasting ?? false,
         contestStrategy:   persona?.can_suggest_contest_strategy ?? false,
         discussOrgStructure: persona?.can_discuss_org_structure ?? false,
@@ -170,6 +179,7 @@ export async function POST(request: NextRequest) {
       employeeNumber: employee.employee_number,
       employeeId:     employee.id,
       businessUnit:   employee.business_unit,
+      workEmail:      (employee.work_email ?? '').trim().toLowerCase(),
       rowScope:       access.row_scope as any,
       allowedTables:  access.allowed_tables,
     };

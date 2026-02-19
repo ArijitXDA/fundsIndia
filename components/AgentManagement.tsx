@@ -43,8 +43,8 @@ interface AccessRecord {
   denied_tables: string[];
   column_filters: Record<string, any>;
   row_scope: Record<string, string>;
-  override_proactive_insights: boolean | null;
-  override_recommendations: boolean | null;
+  override_can_proactively_surface_insights: boolean | null;
+  override_can_make_recommendations: boolean | null;
   show_widget_on_dashboard: boolean;
   widget_greeting: string | null;
   is_active: boolean;
