@@ -510,15 +510,15 @@ async function toolGetTeamPerformance(args: any, ctx: ToolContext) {
   const limit = args.limit ?? 20;
   const sortBy: string = args.sort_by ?? 'mtd_desc';
 
-  // Build W-prefixed keys for B2B lookup
-  const wKeys = allowed === 'all'
-    ? null
-    : (allowed as string[]).map(id => id.startsWith('W') ? id : `W${id}`);
+  // Build W-prefixed keys for B2B lookup (allowed is string[] here — 'all' case returned above)
+  const wKeys = (allowed as string[]).map(id => id.startsWith('W') ? id : `W${id}`);
 
   if (sortBy.includes('ytd')) {
-    let q = supabaseAdmin.from('btb_sales_YTD_minus_current_month').select(B2B_YTD_COLS);
-    if (wKeys) q = q.in('RM Emp ID', wKeys);
-    const { data } = await q.limit(limit * 3); // over-fetch to allow aggregation
+    const { data } = await supabaseAdmin
+      .from('btb_sales_YTD_minus_current_month')
+      .select(B2B_YTD_COLS)
+      .in('RM Emp ID', wKeys)
+      .limit(limit * 3); // over-fetch to allow aggregation
 
     // Aggregate by emp ID
     const byEmp = new Map<string, any>();
@@ -554,15 +554,17 @@ async function toolGetTeamPerformance(args: any, ctx: ToolContext) {
 
     return {
       period: 'YTD',
-      team_size: allowed === 'all' ? 'all' : (allowed as string[]).length,
+      team_size: wKeys.length,
       members,
     };
   }
 
   // MTD (default)
-  let q = supabaseAdmin.from('b2b_sales_current_month').select(B2B_MTD_COLS);
-  if (wKeys) q = q.in('RM Emp ID', wKeys);
-  const { data } = await q.limit(limit * 3);
+  const { data } = await supabaseAdmin
+    .from('b2b_sales_current_month')
+    .select(B2B_MTD_COLS)
+    .in('RM Emp ID', wKeys)
+    .limit(limit * 3);
 
   const byEmp = new Map<string, any>();
   for (const row of (data ?? [])) {
@@ -597,7 +599,7 @@ async function toolGetTeamPerformance(args: any, ctx: ToolContext) {
 
   return {
     period: 'MTD',
-    team_size: allowed === 'all' ? 'all' : (allowed as string[]).length,
+    team_size: wKeys.length,
     members,
   };
 }
