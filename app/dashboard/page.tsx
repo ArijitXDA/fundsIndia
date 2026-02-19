@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { TrendingUp, Award, BarChart3, Trophy, Medal, Crown, Building2, Users, Network, KeyRound, CheckCircle, Shield, LogOut, UserCheck, Globe, ChevronLeft, ChevronRight } from 'lucide-react';
 import OrgChartModal from '@/components/OrgChartModal';
+import AgentWidget from '@/components/AgentWidget';
 
 interface TopPerformer {
   rank: number;
@@ -1129,6 +1130,9 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* FundsAgent floating widget — only renders if user has agent access */}
+      <AgentWidget />
     </div>
   );
 }
