@@ -38,6 +38,8 @@ export default function DashboardPage() {
   const [b2cData, setB2cData] = useState<any>(null);
   const [myPerformance, setMyPerformance] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<TabType>('B2B');
+  const [b2bSort, setB2bSort] = useState<'MTD' | 'YTD'>('MTD');
+  const [b2cSort, setB2cSort] = useState<'MTD' | 'YTD'>('MTD');
   const handleTabChange = (tab: TabType) => { setActiveTab(tab); setB2bPage(1); setB2cPage(1); };
   const [isOrgChartOpen, setIsOrgChartOpen] = useState(false);
   const [passwordResetToast, setPasswordResetToast] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
@@ -547,7 +549,15 @@ export default function DashboardPage() {
 
           {/* Tab Content */}
           {activeTab === 'B2B' && (() => {
-            const allB2B: any[] = salesData?.allEmployeeSales || [];
+            // Sort client-side by the chosen metric, then re-rank
+            const rawB2B: any[] = salesData?.allEmployeeSales || [];
+            const allB2B = [...rawB2B]
+              .sort((a, b) =>
+                b2bSort === 'MTD'
+                  ? (b.mtd?.total || 0) - (a.mtd?.total || 0)
+                  : (b.ytdTotal?.total || 0) - (a.ytdTotal?.total || 0)
+              )
+              .map((p, i) => ({ ...p, rank: i + 1 }));
             const totalB2B = allB2B.length;
             const totalPagesB2B = Math.ceil(totalB2B / PAGE_SIZE);
             const pageB2B = allB2B.slice((b2bPage - 1) * PAGE_SIZE, b2bPage * PAGE_SIZE);
@@ -562,14 +572,41 @@ export default function DashboardPage() {
                       <h2 className="text-2xl font-bold text-white">
                         {isFirstPageB2B ? 'Top 10 B2B Performers' : `B2B Rankings — Rank ${(b2bPage - 1) * PAGE_SIZE + 1}–${Math.min(b2bPage * PAGE_SIZE, totalB2B)}`}
                       </h2>
-                      <p className="text-indigo-100 mt-1">Based on YTD Sales (COB 100%)</p>
+                      <p className="text-indigo-100 mt-1">
+                        Ranked by {b2bSort === 'MTD' ? 'MTD' : 'YTD'} Net Sales (COB 100%)
+                      </p>
                     </div>
                   </div>
-                  {totalB2B > 0 && (
-                    <span className="text-sm text-indigo-200 bg-white/10 px-3 py-1 rounded-full">
-                      {totalB2B} RMs ranked
-                    </span>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {/* MTD / YTD sort toggle */}
+                    <div className="flex items-center bg-white/15 rounded-lg p-1 gap-1">
+                      <button
+                        onClick={() => { setB2bSort('MTD'); setB2bPage(1); }}
+                        className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-all ${
+                          b2bSort === 'MTD'
+                            ? 'bg-white text-indigo-700 shadow'
+                            : 'text-white/80 hover:text-white'
+                        }`}
+                      >
+                        MTD
+                      </button>
+                      <button
+                        onClick={() => { setB2bSort('YTD'); setB2bPage(1); }}
+                        className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-all ${
+                          b2bSort === 'YTD'
+                            ? 'bg-white text-indigo-700 shadow'
+                            : 'text-white/80 hover:text-white'
+                        }`}
+                      >
+                        YTD
+                      </button>
+                    </div>
+                    {totalB2B > 0 && (
+                      <span className="text-sm text-indigo-200 bg-white/10 px-3 py-1 rounded-full">
+                        {totalB2B} RMs ranked
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -601,12 +638,12 @@ export default function DashboardPage() {
                           </div>
                           <div className="flex items-center space-x-8 text-right">
                             <div>
-                              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">MTD Sales</p>
-                              <p className="text-lg font-bold text-indigo-600">{formatCurrency(performer.mtd?.total || 0)}</p>
+                              <p className={`text-xs uppercase tracking-wide mb-1 ${b2bSort === 'MTD' ? 'text-indigo-600 font-semibold' : 'text-gray-500'}`}>MTD Sales</p>
+                              <p className={`font-bold ${b2bSort === 'MTD' ? 'text-2xl text-indigo-600' : 'text-lg text-gray-600'}`}>{formatCurrency(performer.mtd?.total || 0)}</p>
                             </div>
                             <div>
-                              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">YTD Sales</p>
-                              <p className="text-2xl font-bold text-purple-600">{formatCurrency(performer.ytdTotal?.total || 0)}</p>
+                              <p className={`text-xs uppercase tracking-wide mb-1 ${b2bSort === 'YTD' ? 'text-purple-600 font-semibold' : 'text-gray-500'}`}>YTD Sales</p>
+                              <p className={`font-bold ${b2bSort === 'YTD' ? 'text-2xl text-purple-600' : 'text-lg text-gray-600'}`}>{formatCurrency(performer.ytdTotal?.total || 0)}</p>
                             </div>
                           </div>
                         </div>
@@ -701,7 +738,15 @@ export default function DashboardPage() {
           })()}
 
           {activeTab === 'B2C' && (() => {
-            const allB2C: any[] = b2cData?.allAdvisors || [];
+            // Sort client-side by chosen metric, then re-rank
+            const rawB2C: any[] = b2cData?.allAdvisors || [];
+            const allB2C = [...rawB2C]
+              .sort((a, b) =>
+                b2cSort === 'MTD'
+                  ? (b.netInflowMTD || 0) - (a.netInflowMTD || 0)
+                  : (b.netInflowYTD || 0) - (a.netInflowYTD || 0)
+              )
+              .map((a, i) => ({ ...a, rank: i + 1 }));
             const totalB2C = allB2C.length;
             const totalPagesB2C = Math.ceil(totalB2C / PAGE_SIZE);
             const pageB2C = allB2C.slice((b2cPage - 1) * PAGE_SIZE, b2cPage * PAGE_SIZE);
@@ -716,14 +761,41 @@ export default function DashboardPage() {
                       <h2 className="text-2xl font-bold text-white">
                         {isFirstPageB2C ? 'Top 10 B2C Advisors' : `B2C Rankings — Rank ${(b2cPage - 1) * PAGE_SIZE + 1}–${Math.min(b2cPage * PAGE_SIZE, totalB2C)}`}
                       </h2>
-                      <p className="text-blue-100 mt-1">Based on Net Inflow YTD Performance</p>
+                      <p className="text-blue-100 mt-1">
+                        Ranked by {b2cSort === 'MTD' ? 'MTD' : 'YTD'} Net Inflow
+                      </p>
                     </div>
                   </div>
-                  {totalB2C > 0 && (
-                    <span className="text-sm text-blue-200 bg-white/10 px-3 py-1 rounded-full">
-                      {totalB2C} Advisors ranked
-                    </span>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {/* MTD / YTD sort toggle */}
+                    <div className="flex items-center bg-white/15 rounded-lg p-1 gap-1">
+                      <button
+                        onClick={() => { setB2cSort('MTD'); setB2cPage(1); }}
+                        className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-all ${
+                          b2cSort === 'MTD'
+                            ? 'bg-white text-blue-700 shadow'
+                            : 'text-white/80 hover:text-white'
+                        }`}
+                      >
+                        MTD
+                      </button>
+                      <button
+                        onClick={() => { setB2cSort('YTD'); setB2cPage(1); }}
+                        className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-all ${
+                          b2cSort === 'YTD'
+                            ? 'bg-white text-blue-700 shadow'
+                            : 'text-white/80 hover:text-white'
+                        }`}
+                      >
+                        YTD
+                      </button>
+                    </div>
+                    {totalB2C > 0 && (
+                      <span className="text-sm text-blue-200 bg-white/10 px-3 py-1 rounded-full">
+                        {totalB2C} Advisors ranked
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -755,12 +827,12 @@ export default function DashboardPage() {
                           </div>
                           <div className="flex items-center space-x-6 text-right">
                             <div>
-                              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Net Inflow MTD</p>
-                              <p className="text-lg font-bold text-blue-600">₹{advisor.netInflowMTD?.toFixed(2)} Cr</p>
+                              <p className={`text-xs uppercase tracking-wide mb-1 ${b2cSort === 'MTD' ? 'text-blue-600 font-semibold' : 'text-gray-500'}`}>Net Inflow MTD</p>
+                              <p className={`font-bold ${b2cSort === 'MTD' ? 'text-2xl text-blue-600' : 'text-lg text-gray-600'}`}>₹{advisor.netInflowMTD?.toFixed(2)} Cr</p>
                             </div>
                             <div>
-                              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Net Inflow YTD</p>
-                              <p className="text-2xl font-bold text-cyan-600">₹{advisor.netInflowYTD?.toFixed(2)} Cr</p>
+                              <p className={`text-xs uppercase tracking-wide mb-1 ${b2cSort === 'YTD' ? 'text-cyan-600 font-semibold' : 'text-gray-500'}`}>Net Inflow YTD</p>
+                              <p className={`font-bold ${b2cSort === 'YTD' ? 'text-2xl text-cyan-600' : 'text-lg text-gray-600'}`}>₹{advisor.netInflowYTD?.toFixed(2)} Cr</p>
                             </div>
                             <div>
                               <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Current AUM</p>
