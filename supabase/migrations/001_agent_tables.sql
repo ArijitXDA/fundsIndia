@@ -63,13 +63,12 @@ CREATE TABLE IF NOT EXISTS agent_access (
 
   -- Column-level filters per table
   -- e.g. {"employees": {"business_unit": ["B2B"]}}
-  -- Agent query engine enforces these at fetch time
   column_filters jsonb NOT NULL DEFAULT '{}',
 
-  -- Row-scope rules per table
+  -- Row-scope rules
   -- Tokens: 'own_only' | 'own_and_team' | 'vertical_only' | 'all'
-  -- e.g. {"b2b_sales_current_month": "own_and_team", "employees": "own_and_team"}
-  row_scope jsonb NOT NULL DEFAULT '{}',
+  -- e.g. {"default": "own_and_team"}
+  row_scope jsonb NOT NULL DEFAULT '{"default": "own_only"}',
 
   -- Per-employee overrides (null = use persona default)
   override_proactive_insights  boolean,
@@ -77,11 +76,11 @@ CREATE TABLE IF NOT EXISTS agent_access (
 
   -- Dashboard widget
   show_widget_on_dashboard boolean NOT NULL DEFAULT true,
-  widget_greeting          text,  -- e.g. "Ready to crush today, {name}? 🚀"
+  widget_greeting          text,
 
   -- Status & audit
   is_active   boolean NOT NULL DEFAULT true,
-  granted_by  uuid,   -- references users(id)
+  granted_by  uuid,
   granted_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now(),
 
@@ -89,24 +88,25 @@ CREATE TABLE IF NOT EXISTS agent_access (
 );
 
 -- ─── 3. agent_conversations ──────────────────────────────────
--- One row per conversation session (groups messages together).
+-- One row per conversation session.
 CREATE TABLE IF NOT EXISTS agent_conversations (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   employee_id uuid NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
   persona_id  uuid REFERENCES agent_personas(id) ON DELETE SET NULL,
 
-  title              text,    -- Auto-generated from first message
+  title              text,
   started_at         timestamptz NOT NULL DEFAULT now(),
   last_active_at     timestamptz NOT NULL DEFAULT now(),
   message_count      integer NOT NULL DEFAULT 0,
   is_archived        boolean NOT NULL DEFAULT false,
 
-  -- Rolling summary updated after each exchange — used as context in future sessions
+  -- Rolling summary for future session context
   conversation_summary text
 );
 
 -- ─── 4. agent_messages ───────────────────────────────────────
 -- Individual messages within a conversation.
+-- employee_id is denormalised here for fast per-employee queries.
 CREATE TABLE IF NOT EXISTS agent_messages (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   conversation_id uuid NOT NULL REFERENCES agent_conversations(id) ON DELETE CASCADE,
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS agent_messages (
   role    text NOT NULL CHECK (role IN ('user','assistant','system','tool')),
   content text NOT NULL,
 
-  -- Traceability: which tables were queried to generate this response
+  -- Traceability
   data_sources_used text[],
   tokens_used       integer,
   model_used        text,
@@ -129,24 +129,27 @@ CREATE TABLE IF NOT EXISTS agent_messages (
 );
 
 -- ─── 5. agent_memory ─────────────────────────────────────────
--- Persistent per-user key-value memory that survives across sessions.
+-- Persistent per-user key-value memory across sessions.
+-- Columns are named memory_key / memory_value to avoid reserved word
+-- conflicts and to match the application query layer.
 CREATE TABLE IF NOT EXISTS agent_memory (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   employee_id uuid NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
 
-  memory_type text NOT NULL,
+  memory_type  text NOT NULL DEFAULT 'fact',
   -- 'preference' | 'fact' | 'goal' | 'context' | 'alert_dismissed'
-  key         text NOT NULL,   -- e.g. 'focus_zone', 'monthly_target', 'preferred_metric'
-  value       text NOT NULL,
+  memory_key   text NOT NULL,
+  memory_value text NOT NULL,
 
   source      text NOT NULL DEFAULT 'user_stated',
   -- 'user_stated' | 'agent_inferred' | 'admin_set'
-  confidence  numeric(3,2),    -- 0.0–1.0 (for inferred memories only)
+  confidence  numeric(3,2),   -- 0.0–1.0 (for inferred memories only)
 
   created_at  timestamptz NOT NULL DEFAULT now(),
-  expires_at  timestamptz,     -- null = permanent
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  expiry_at   timestamptz,    -- null = permanent
 
-  UNIQUE(employee_id, key)
+  UNIQUE(employee_id, memory_key)
 );
 
 -- ─── Indexes ─────────────────────────────────────────────────
@@ -159,8 +162,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_messages_emp       ON agent_messages(employ
 CREATE INDEX IF NOT EXISTS idx_agent_messages_created   ON agent_messages(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agent_memory_emp         ON agent_memory(employee_id);
 
--- ─── Seed: default persona ────────────────────────────────────
--- One ready-to-use persona so Dev Admin can immediately assign
+-- ─── Seed: 4 default personas ────────────────────────────────
 INSERT INTO agent_personas (
   name, description, model, temperature, top_p, max_tokens,
   agent_name, tone, output_format,
