@@ -566,10 +566,14 @@ function streamTextResponse(
 function filterTools(tools: any[], access: any, persona: any) {
   const canOrgStructure = persona?.can_discuss_org_structure ?? false;
   const canProactive    = (access.override_can_proactively_surface_insights ?? persona?.can_proactively_surface_insights) ?? false;
+  const rowScope        = (access.row_scope as any)?.default ?? 'own_only';
+  const isAllScope      = rowScope === 'all';
 
   return tools.filter(t => {
     if (t.function.name === 'get_org_structure' && !canOrgStructure) return false;
     if (t.function.name === 'get_proactive_insights' && !canProactive) return false;
+    // get_company_summary only available to all-scope users (leadership / Group CEO)
+    if (t.function.name === 'get_company_summary' && !isAllScope) return false;
     return true;
   });
 }

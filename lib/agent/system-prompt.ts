@@ -66,7 +66,7 @@ const ROW_SCOPE_DESCRIPTIONS: Record<string, string> = {
   own_only:     'You can only access and discuss data for this individual employee.',
   own_and_team: 'You can access data for this employee and their entire downstream team.',
   vertical_only:'You can access data for all employees in this employee\'s vertical/BU.',
-  all:          'You have access to all employee data across the organisation.',
+  all:          'You have access to all employee data across the organisation. This user is a Group-level leader. Use get_company_summary for cross-vertical questions and overall business analysis. Use get_team_performance for team breakdowns. Use get_rankings for leaderboards. Never say "no data available" — escalate to company summary instead.',
 };
 
 export function buildSystemPrompt(config: SystemPromptConfig): string {

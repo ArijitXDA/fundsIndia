@@ -270,6 +270,28 @@ export const AGENT_TOOLS = [
   {
     type: 'function' as const,
     function: {
+      name: 'get_company_summary',
+      description: 'Get a high-level company-wide performance summary across all verticals (B2B and B2C). Returns total MTD and YTD figures for each vertical, top performers, and a combined company total. Use this for Group CEO / leadership queries like "how is the company doing", "give me an analysis of all verticals", or when the user asks about overall business performance.',
+      parameters: {
+        type: 'object',
+        properties: {
+          period: {
+            type: 'string',
+            enum: ['MTD', 'YTD', 'both'],
+            description: 'Which period to return. Default: both',
+          },
+          include_top_performers: {
+            type: 'boolean',
+            description: 'Whether to include top 3 performers per vertical. Default: true',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'save_memory',
       description: 'Persist a piece of information about the user to memory so it can be recalled in future sessions. Use this when the user shares preferences, goals, context, or anything worth remembering long-term. Examples: preferred reporting format, personal targets, noted concerns, focus areas.',
       parameters: {
@@ -343,6 +365,9 @@ export async function executeTool(
 
     case 'get_proactive_insights':
       return await toolGetProactiveInsights(args, ctx);
+
+    case 'get_company_summary':
+      return await toolGetCompanySummary(args, ctx);
 
     case 'save_memory':
       return await toolSaveMemory(args, ctx);
@@ -454,6 +479,13 @@ async function toolGetMyPerformance(args: any, ctx: ToolContext) {
     };
   }
 
+  // For non-B2B/B2C BUs (e.g. Corporate, Management, Group CEO) — return company-wide summary
+  // so leadership users get meaningful data instead of an empty response.
+  const scope = ctx.rowScope?.default ?? 'own_only';
+  if (scope === 'all') {
+    return await toolGetCompanySummary({ period: 'both', include_top_performers: true }, ctx);
+  }
+
   return { vertical: bu, message: 'No direct sales data available for this business unit.' };
 }
 
@@ -462,7 +494,12 @@ async function toolGetMyPerformance(args: any, ctx: ToolContext) {
 async function toolGetTeamPerformance(args: any, ctx: ToolContext) {
   const allowed = await resolveAllowedEmployeeNumbers(ctx.employeeNumber, ctx.rowScope);
 
-  if (allowed !== 'all' && (allowed as string[]).length <= 1) {
+  // Group CEO / all-scope: delegate to company summary which covers all verticals
+  if (allowed === 'all') {
+    return await toolGetCompanySummary({ period: args.sort_by?.includes('ytd') ? 'YTD' : 'MTD', include_top_performers: true }, ctx);
+  }
+
+  if ((allowed as string[]).length <= 1) {
     return {
       message: 'No team members found under your profile, or your access level restricts team data.',
       team_size: 0,
@@ -743,58 +780,119 @@ async function toolGetProactiveInsights(args: any, ctx: ToolContext) {
   const checks = args.check_types ?? ['all'];
   const runAll = checks.includes('all');
   const insights: any[] = [];
+  const scope = ctx.rowScope?.default ?? 'own_only';
+  const isAllScope = scope === 'all';
 
-  // 1. Target gap check — uses `targets` table in live schema
+  // For all-scope users (Group CEO / leadership) — return a company-wide snapshot
+  // instead of individual B2B-only checks which would yield empty results.
+  if (isAllScope) {
+    const summary = await toolGetCompanySummary({ period: 'MTD', include_top_performers: true }, ctx);
+    return {
+      insights: [{
+        type: 'company_snapshot',
+        severity: 'info',
+        title: 'Company performance snapshot',
+        detail: 'Full cross-vertical summary attached below.',
+        company_summary: summary,
+      }],
+      timestamp: new Date().toISOString(),
+      employee_number: ctx.employeeNumber,
+      note: 'Showing company-wide summary for leadership access level.',
+    };
+  }
+
+  // 1. Target gap check — individual B2B employee (uses `targets` table)
   if (runAll || checks.includes('target_gap')) {
-    const wKey = ctx.employeeNumber.startsWith('W') ? ctx.employeeNumber : `W${ctx.employeeNumber}`;
+    if (ctx.businessUnit === 'B2B') {
+      const wKey = ctx.employeeNumber.startsWith('W') ? ctx.employeeNumber : `W${ctx.employeeNumber}`;
 
-    // Fetch current MTD performance
-    const { data: mtdRows } = await supabaseAdmin
-      .from('b2b_sales_current_month')
-      .select(B2B_MTD_COLS)
-      .eq('RM Emp ID', wKey);
+      const { data: mtdRows } = await supabaseAdmin
+        .from('b2b_sales_current_month')
+        .select(B2B_MTD_COLS)
+        .eq('RM Emp ID', wKey);
 
-    const mtdTotal = (mtdRows ?? []).reduce((sum: number, row: any) =>
-      sum + (parseFloat(row['Total Net Sales (COB 100%)'] || 0) || 0), 0
-    );
+      const mtdTotal = (mtdRows ?? []).reduce((sum: number, row: any) =>
+        sum + (parseFloat(row['Total Net Sales (COB 100%)'] || 0) || 0), 0
+      );
 
-    // Fetch target from targets table (live schema)
-    const { data: targetRows } = await supabaseAdmin
-      .from('targets')
-      .select('target_value, period_start, period_end')
-      .eq('employee_id', ctx.employeeId)
-      .eq('business_unit', 'B2B')
-      .eq('target_type', 'monthly')
-      .order('period_start', { ascending: false })
-      .limit(1);
+      const { data: targetRows } = await supabaseAdmin
+        .from('targets')
+        .select('target_value, period_start, period_end')
+        .eq('employee_id', ctx.employeeId)
+        .eq('business_unit', 'B2B')
+        .eq('target_type', 'monthly')
+        .order('period_start', { ascending: false })
+        .limit(1);
 
-    const targetVal = targetRows?.[0]?.target_value;
+      const targetVal = targetRows?.[0]?.target_value;
 
-    if (mtdRows && mtdRows.length > 0) {
-      if (targetVal) {
-        const pct = (mtdTotal / targetVal) * 100;
-        insights.push({
-          type: 'target_gap',
-          severity: pct < 50 ? 'high' : pct < 80 ? 'medium' : 'low',
-          title: pct < 50 ? 'Critical target gap' : pct < 80 ? 'Target gap alert' : 'On track with target',
-          detail: `You are at ${pct.toFixed(1)}% of your monthly target (${mtdTotal.toFixed(2)} Cr of ${Number(targetVal).toFixed(2)} Cr MTD).`,
-          mtd_cr: mtdTotal,
-          target_cr: targetVal,
-          achievement_pct: pct,
-        });
-      } else {
-        insights.push({
-          type: 'target_gap',
-          severity: 'info',
-          title: 'MTD performance',
-          detail: `Your MTD total is ${mtdTotal.toFixed(2)} Cr. No target data found to compare against.`,
-          mtd_cr: mtdTotal,
-        });
+      if (mtdRows && mtdRows.length > 0) {
+        if (targetVal) {
+          const pct = (mtdTotal / targetVal) * 100;
+          insights.push({
+            type: 'target_gap',
+            severity: pct < 50 ? 'high' : pct < 80 ? 'medium' : 'low',
+            title: pct < 50 ? 'Critical target gap' : pct < 80 ? 'Target gap alert' : 'On track with target',
+            detail: `You are at ${pct.toFixed(1)}% of your monthly target (${mtdTotal.toFixed(2)} Cr of ${Number(targetVal).toFixed(2)} Cr MTD).`,
+            mtd_cr: mtdTotal,
+            target_cr: targetVal,
+            achievement_pct: pct,
+          });
+        } else {
+          insights.push({
+            type: 'target_gap',
+            severity: 'info',
+            title: 'MTD performance',
+            detail: `Your MTD total is ${mtdTotal.toFixed(2)} Cr. No target data found to compare against.`,
+            mtd_cr: mtdTotal,
+          });
+        }
+      }
+    } else if (ctx.businessUnit === 'B2C') {
+      // B2C target gap
+      const { data: b2cRows } = await supabaseAdmin
+        .from('b2c')
+        .select('*')
+        .ilike('advisor', ctx.workEmail);
+
+      if (b2cRows && b2cRows.length > 0) {
+        const row = parseB2cRow(b2cRows[0]);
+        const { data: targetRows } = await supabaseAdmin
+          .from('targets')
+          .select('target_value')
+          .eq('employee_id', ctx.employeeId)
+          .eq('business_unit', 'B2C')
+          .eq('target_type', 'monthly')
+          .order('period_start', { ascending: false })
+          .limit(1);
+
+        const targetVal = targetRows?.[0]?.target_value;
+        if (targetVal) {
+          const pct = (row.net_inflow_mtd / targetVal) * 100;
+          insights.push({
+            type: 'target_gap',
+            severity: pct < 50 ? 'high' : pct < 80 ? 'medium' : 'low',
+            title: pct < 50 ? 'Critical target gap' : pct < 80 ? 'Target gap alert' : 'On track',
+            detail: `Net Inflow MTD at ${pct.toFixed(1)}% of target (${row.net_inflow_mtd.toFixed(2)} Cr of ${Number(targetVal).toFixed(2)} Cr).`,
+            mtd_cr: row.net_inflow_mtd,
+            target_cr: targetVal,
+            achievement_pct: pct,
+          });
+        } else {
+          insights.push({
+            type: 'target_gap',
+            severity: 'info',
+            title: 'B2C MTD performance',
+            detail: `Net Inflow MTD: ${row.net_inflow_mtd.toFixed(2)} Cr. AUM: ${row.current_aum.toFixed(2)} Cr. No target set to compare against.`,
+            net_inflow_mtd_cr: row.net_inflow_mtd,
+            current_aum_cr: row.current_aum,
+          });
+        }
       }
     }
   }
 
-  // 2. Team outlier check
+  // 2. Team outlier check (only for managers with a team)
   if (runAll || checks.includes('team_outlier')) {
     const allowed = await resolveAllowedEmployeeNumbers(ctx.employeeNumber, ctx.rowScope);
 
@@ -807,7 +905,6 @@ async function toolGetProactiveInsights(args: any, ctx: ToolContext) {
         .select(B2B_MTD_COLS)
         .in('RM Emp ID', wKeys);
 
-      // Aggregate by emp
       const byEmp = new Map<string, any>();
       for (const row of (data ?? [])) {
         const r = parseMtdRow(row);
@@ -839,8 +936,8 @@ async function toolGetProactiveInsights(args: any, ctx: ToolContext) {
     }
   }
 
-  // 3. Ranking summary
-  if (runAll || checks.includes('ranking_summary')) {
+  // 3. Ranking summary (B2B employees only)
+  if ((runAll || checks.includes('ranking_summary')) && ctx.businessUnit === 'B2B') {
     const wKey = ctx.employeeNumber.startsWith('W') ? ctx.employeeNumber : `W${ctx.employeeNumber}`;
 
     const { data: allMtd } = await supabaseAdmin
@@ -849,7 +946,6 @@ async function toolGetProactiveInsights(args: any, ctx: ToolContext) {
       .limit(5000);
 
     if (allMtd && allMtd.length > 0) {
-      // Aggregate by emp
       const byEmp = new Map<string, number>();
       for (const row of allMtd) {
         const id = String(row['RM Emp ID'] || '').trim();
@@ -874,11 +970,141 @@ async function toolGetProactiveInsights(args: any, ctx: ToolContext) {
     }
   }
 
+  // If no insights generated (e.g. non-B2B/B2C individual), return a helpful fallback
+  if (insights.length === 0) {
+    insights.push({
+      type: 'info',
+      severity: 'info',
+      title: 'No specific alerts at this time',
+      detail: 'Everything appears on track. Ask me about specific metrics, your team, or rankings.',
+    });
+  }
+
   return {
     insights,
     timestamp: new Date().toISOString(),
     employee_number: ctx.employeeNumber,
   };
+}
+
+// ── Tool: get_company_summary ─────────────────────────────────────────────────
+
+async function toolGetCompanySummary(args: any, ctx: ToolContext) {
+  const period = args.period ?? 'both';
+  const includeTop = args.include_top_performers !== false;
+
+  // ── B2B aggregation ──────────────────────────────────────────────────────
+  const [{ data: b2bMtdRows }, { data: b2bYtdRows }, { data: b2cRows }] = await Promise.all([
+    supabaseAdmin
+      .from('b2b_sales_current_month')
+      .select(`"RM Emp ID", "MF+SIF+MSCI", "COB (100%)", "AIF+PMS+LAS+DYNAMO (TRAIL)", "ALTERNATE", "Total Net Sales (COB 100%)", "Zone"`)
+      .limit(5000),
+    supabaseAdmin
+      .from('btb_sales_YTD_minus_current_month')
+      .select(`"RM Emp ID", "Total Net Sales (COB 100%)"`)
+      .limit(5000),
+    supabaseAdmin
+      .from('b2c')
+      .select(`advisor, team, "net_inflow_mtd[cr]", "net_inflow_ytd[cr]", "current_aum_mtm [cr.]"`)
+      .limit(2000),
+  ]);
+
+  // Aggregate B2B MTD by employee
+  const b2bByEmpMtd = new Map<string, any>();
+  for (const row of (b2bMtdRows ?? [])) {
+    const r = parseMtdRow(row);
+    if (!r.emp_id || r.emp_id === '#N/A') continue;
+    if (!b2bByEmpMtd.has(r.emp_id)) b2bByEmpMtd.set(r.emp_id, { ...r });
+    else {
+      const e = b2bByEmpMtd.get(r.emp_id)!;
+      e.total       += r.total;
+      e.mf_sif_msci += r.mf_sif_msci;
+      e.cob100      += r.cob100;
+      e.aif_pms_las += r.aif_pms_las;
+      e.alternate   += r.alternate;
+    }
+  }
+
+  // Aggregate B2B YTD by employee
+  const b2bByEmpYtd = new Map<string, number>();
+  for (const row of (b2bYtdRows ?? [])) {
+    const id = String(row['RM Emp ID'] || '').trim();
+    if (!id || id === '#N/A') continue;
+    b2bByEmpYtd.set(id, (b2bByEmpYtd.get(id) ?? 0) + (parseFloat(row['Total Net Sales (COB 100%)'] || 0) || 0));
+  }
+
+  const b2bMtdEmployees = Array.from(b2bByEmpMtd.values());
+  const b2bTotalMtd     = b2bMtdEmployees.reduce((s, r) => s + r.total, 0);
+  const b2bTotalYtd     = Array.from(b2bByEmpYtd.values()).reduce((s, v) => s + v, 0);
+  const b2bMfMtd        = b2bMtdEmployees.reduce((s, r) => s + r.mf_sif_msci, 0);
+  const b2bCobMtd       = b2bMtdEmployees.reduce((s, r) => s + r.cob100, 0);
+  const b2bAifMtd       = b2bMtdEmployees.reduce((s, r) => s + r.aif_pms_las, 0);
+  const b2bAltMtd       = b2bMtdEmployees.reduce((s, r) => s + r.alternate, 0);
+
+  // B2B top performers
+  const b2bTopMtd = [...b2bMtdEmployees]
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 3)
+    .map((r, i) => ({ rank: i + 1, employee_number: r.emp_id, name: r.name, zone: r.zone, mtd_total_cr: r.total }));
+
+  // ── B2C aggregation ──────────────────────────────────────────────────────
+  const b2cParsed        = (b2cRows ?? []).map(parseB2cRow);
+  const b2cTotalMtd      = b2cParsed.reduce((s, r) => s + r.net_inflow_mtd, 0);
+  const b2cTotalYtd      = b2cParsed.reduce((s, r) => s + r.net_inflow_ytd, 0);
+  const b2cTotalAum      = b2cParsed.reduce((s, r) => s + r.current_aum, 0);
+  const b2cAdvisors      = b2cParsed.length;
+
+  const b2cTopMtd = [...b2cParsed]
+    .sort((a, b) => b.net_inflow_mtd - a.net_inflow_mtd)
+    .slice(0, 3)
+    .map((r, i) => ({ rank: i + 1, advisor: r.advisor_email, team: r.team, net_inflow_mtd_cr: r.net_inflow_mtd }));
+
+  // ── Zone-wise B2B breakdown ───────────────────────────────────────────────
+  const zoneMap = new Map<string, number>();
+  for (const r of b2bMtdEmployees) {
+    const z = r.zone || 'Unknown';
+    zoneMap.set(z, (zoneMap.get(z) ?? 0) + r.total);
+  }
+  const zoneBreakdown = Array.from(zoneMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([zone, total]) => ({ zone, mtd_total_cr: parseFloat(total.toFixed(2)) }));
+
+  // ── Combined totals ───────────────────────────────────────────────────────
+  const combinedMtd = b2bTotalMtd + b2cTotalMtd;
+  const combinedYtd = b2bTotalYtd + b2cTotalYtd;
+
+  const result: any = {
+    as_of: new Date().toISOString(),
+    company_totals: {
+      combined_mtd_cr: parseFloat(combinedMtd.toFixed(2)),
+      combined_ytd_cr: parseFloat(combinedYtd.toFixed(2)),
+    },
+    b2b: {
+      total_employees: b2bByEmpMtd.size,
+      mtd_total_cr:    parseFloat(b2bTotalMtd.toFixed(2)),
+      ytd_total_cr:    parseFloat(b2bTotalYtd.toFixed(2)),
+      mtd_breakdown: {
+        mf_sif_msci_cr: parseFloat(b2bMfMtd.toFixed(2)),
+        cob100_cr:      parseFloat(b2bCobMtd.toFixed(2)),
+        aif_pms_las_cr: parseFloat(b2bAifMtd.toFixed(2)),
+        alternate_cr:   parseFloat(b2bAltMtd.toFixed(2)),
+      },
+      zone_breakdown: zoneBreakdown,
+    },
+    b2c: {
+      total_advisors:  b2cAdvisors,
+      mtd_net_inflow_cr: parseFloat(b2cTotalMtd.toFixed(2)),
+      ytd_net_inflow_cr: parseFloat(b2cTotalYtd.toFixed(2)),
+      total_aum_cr:    parseFloat(b2cTotalAum.toFixed(2)),
+    },
+  };
+
+  if (includeTop) {
+    result.b2b.top_performers_mtd = b2bTopMtd;
+    result.b2c.top_advisors_mtd   = b2cTopMtd;
+  }
+
+  return result;
 }
 
 // ── Tool: save_memory ─────────────────────────────────────────────────────────
