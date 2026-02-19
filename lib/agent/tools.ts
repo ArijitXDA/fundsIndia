@@ -267,6 +267,36 @@ export const AGENT_TOOLS = [
       },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'save_memory',
+      description: 'Persist a piece of information about the user to memory so it can be recalled in future sessions. Use this when the user shares preferences, goals, context, or anything worth remembering long-term. Examples: preferred reporting format, personal targets, noted concerns, focus areas.',
+      parameters: {
+        type: 'object',
+        properties: {
+          key: {
+            type: 'string',
+            description: 'A short descriptive key for this memory item (e.g., "preferred_format", "monthly_target_goal", "focus_area")',
+          },
+          value: {
+            type: 'string',
+            description: 'The value to store. Keep it concise but complete.',
+          },
+          memory_type: {
+            type: 'string',
+            enum: ['preference', 'goal', 'context', 'note'],
+            description: 'Category of this memory. Default: context',
+          },
+          expires_days: {
+            type: 'number',
+            description: 'Optional: number of days before this memory expires. Omit for permanent memory.',
+          },
+        },
+        required: ['key', 'value'],
+      },
+    },
+  },
 ];
 
 // ─── Tool Context ─────────────────────────────────────────────────────────────
@@ -313,6 +343,9 @@ export async function executeTool(
 
     case 'get_proactive_insights':
       return await toolGetProactiveInsights(args, ctx);
+
+    case 'save_memory':
+      return await toolSaveMemory(args, ctx);
 
     default:
       return { error: `Unknown tool: ${toolName}` };
@@ -845,5 +878,48 @@ async function toolGetProactiveInsights(args: any, ctx: ToolContext) {
     insights,
     timestamp: new Date().toISOString(),
     employee_number: ctx.employeeNumber,
+  };
+}
+
+// ── Tool: save_memory ─────────────────────────────────────────────────────────
+
+async function toolSaveMemory(args: any, ctx: ToolContext) {
+  const key          = String(args.key ?? '').trim().slice(0, 100);
+  const value        = String(args.value ?? '').trim().slice(0, 1000);
+  const memory_type  = args.memory_type ?? 'context';
+  const expiresDays  = args.expires_days ? Number(args.expires_days) : null;
+
+  if (!key || !value) {
+    return { error: 'key and value are required to save memory' };
+  }
+
+  const expires_at = expiresDays
+    ? new Date(Date.now() + expiresDays * 86_400_000).toISOString()
+    : null;
+
+  // Upsert on (employee_id, key) — overwrite existing entry with same key
+  const { error } = await supabaseAdmin
+    .from('agent_memory')
+    .upsert(
+      {
+        employee_id: ctx.employeeId,
+        key,
+        value,
+        memory_type,
+        expires_at,
+      },
+      { onConflict: 'employee_id,key' }
+    );
+
+  if (error) {
+    return { error: `Failed to save memory: ${error.message}` };
+  }
+
+  return {
+    saved: true,
+    key,
+    memory_type,
+    expires_at: expires_at ?? 'never',
+    message: `I've remembered that: "${key}" = "${value}".`,
   };
 }
