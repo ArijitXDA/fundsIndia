@@ -98,9 +98,11 @@ export default function DashboardPage() {
   };
 
   const handleExitImpersonation = async () => {
-    await fetch('/api/admin/exit-impersonation', { method: 'POST' });
-    router.push('/dashboard');
-    router.refresh();
+    const res = await fetch('/api/admin/exit-impersonation', { method: 'POST' });
+    if (res.ok) {
+      // Hard redirect so the browser picks up the restored admin session cookie
+      window.location.href = '/admin';
+    }
   };
 
   const handleChangePassword = async () => {
