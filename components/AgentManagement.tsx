@@ -283,7 +283,7 @@ export default function AgentManagement({ showToast }: { showToast: (type: 'succ
                   allowed_tables: ['employees', 'b2b_sales_current_month', 'btb_sales_YTD_minus_current_month', 'b2c'],
                   denied_tables: [],
                   column_filters: {},
-                  row_scope: { b2b_sales_current_month: 'own_and_team', btb_sales_YTD_minus_current_month: 'own_and_team', employees: 'own_and_team' },
+                  row_scope: { default: 'own_and_team' },
                   show_widget_on_dashboard: true,
                   widget_greeting: '',
                   is_active: true,
@@ -750,16 +750,12 @@ function AccessCard({ record, onEdit, onDelete, onToggle }: {
               </div>
             </div>
           )}
-          {Object.keys(record.row_scope || {}).length > 0 && (
+          {(record.row_scope as Record<string, string>)?.['default'] && (
             <div>
               <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Row Scope</p>
-              <div className="flex flex-wrap gap-1.5">
-                {Object.entries(record.row_scope).map(([table, scope]) => (
-                  <span key={table} className="text-[11px] px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium">
-                    {table}: <strong>{scope}</strong>
-                  </span>
-                ))}
-              </div>
+              <span className="text-[11px] px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium">
+                {(record.row_scope as Record<string, string>)['default']}
+              </span>
             </div>
           )}
         </div>
@@ -881,6 +877,33 @@ function AccessEditor({ record, onChange, personas, isNew, empSearch, setEmpSear
         </div>
       </div>
 
+      {/* Global Row Scope */}
+      <div>
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 flex items-center space-x-1">
+          <Shield className="w-3.5 h-3.5" /><span>Global Row Scope</span>
+        </p>
+        <p className="text-xs text-gray-400 mb-2">Controls how much data this employee can see across all tables. This is the primary access level.</p>
+        <select
+          value={(record.row_scope as Record<string, string> || {})['default'] || 'own_only'}
+          onChange={e => {
+            const current = { ...(record.row_scope as Record<string, string> || {}) };
+            current['default'] = e.target.value;
+            set('row_scope', current);
+          }}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-violet-500"
+        >
+          <option value="own_only">own only — sees only their own data</option>
+          <option value="own_and_team">own + team — sees their data and all downstream reportees</option>
+          <option value="vertical_only">vertical only — sees all data in their business unit</option>
+          <option value="all">all — full company-wide access (Group CEO / leadership)</option>
+        </select>
+        <p className="text-xs text-indigo-600 mt-1.5 font-medium">
+          Current: <code className="bg-indigo-50 px-1.5 py-0.5 rounded text-indigo-700">
+            {(record.row_scope as Record<string, string> || {})['default'] || 'own_only'}
+          </code>
+        </p>
+      </div>
+
       {/* Table access */}
       <div>
         <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center space-x-1">
@@ -890,7 +913,6 @@ function AccessEditor({ record, onChange, personas, isNew, empSearch, setEmpSear
           {KNOWN_TABLES.map(table => {
             const allowed = (record.allowed_tables || []).includes(table.id);
             const denied = (record.denied_tables || []).includes(table.id);
-            const scopeValue = (record.row_scope as Record<string, string> || {})[table.id] || '';
             return (
               <div key={table.id} className={`p-3 rounded-lg border transition-all ${allowed ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
                 <div className="flex items-center justify-between">
@@ -903,15 +925,6 @@ function AccessEditor({ record, onChange, personas, isNew, empSearch, setEmpSear
                       <p className="text-xs text-gray-500">{table.desc}</p>
                     </div>
                   </div>
-                  {allowed && (
-                    <select value={scopeValue} onChange={e => setRowScope(table.id, e.target.value)}
-                      className="text-xs border border-green-300 bg-white rounded-lg px-2 py-1 text-green-800 focus:ring-1 focus:ring-green-400">
-                      <option value="">All rows</option>
-                      {ROW_SCOPE_OPTIONS.map(s => (
-                        <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
-                      ))}
-                    </select>
-                  )}
                 </div>
               </div>
             );
