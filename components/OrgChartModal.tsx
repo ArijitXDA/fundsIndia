@@ -22,9 +22,11 @@ interface OrgChartModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentEmployeeNumber: string;
+  /** When set, shows ALL employees of this business unit (vertical view) instead of user's downstream */
+  verticalFilter?: string | null;
 }
 
-export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }: OrgChartModalProps) {
+export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber, verticalFilter }: OrgChartModalProps) {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [visibleEmployees, setVisibleEmployees] = useState<Set<string>>(new Set());
@@ -34,42 +36,55 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
     if (isOpen) {
       fetchOrgData();
     }
-  }, [isOpen, currentEmployeeNumber]);
+  }, [isOpen, currentEmployeeNumber, verticalFilter]);
 
   const fetchOrgData = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`/api/org-hierarchy?employeeId=${currentEmployeeNumber}`);
+
+      // Build URL — include businessUnit filter for vertical-support users
+      let url = `/api/org-hierarchy?employeeId=${currentEmployeeNumber}`;
+      if (verticalFilter) {
+        // Map 'PW' back to 'Private Wealth' for the DB business_unit column
+        const buParam = verticalFilter === 'PW' ? 'Private Wealth' : verticalFilter;
+        url += `&businessUnit=${encodeURIComponent(buParam)}`;
+      }
+
+      const response = await fetch(url);
       const data = await response.json();
 
       if (data.success) {
-        // Filter to only downstream employees (current user + all subordinates)
         const allEmployees = data.employees;
 
-        // If currentEmployee exists in data, use it; otherwise find by employee number
-        const current = data.currentEmployee || allEmployees.find((e: Employee) => e.employeeNumber === currentEmployeeNumber);
+        if (verticalFilter) {
+          // Vertical view: show ALL employees of the vertical, starting from their top-most root(s)
+          // Find all root employees (no manager, or manager not in this vertical's list)
+          const empNumbers = new Set(allEmployees.map((e: Employee) => e.employeeNumber));
+          const roots = allEmployees.filter(
+            (e: Employee) => !e.reportingManagerEmpNo || !empNumbers.has(e.reportingManagerEmpNo)
+          );
 
-        if (current) {
-          const downstreamEmployees = getDownstreamEmployees(allEmployees, current.employeeNumber);
-          setEmployees(downstreamEmployees);
-          setCurrentEmployee(current);
-          setVisibleEmployees(new Set([current.employeeNumber]));
+          setEmployees(allEmployees);
+          // Set first root as "current" for display purposes; highlight actual current user if present
+          const actualCurrent = allEmployees.find((e: Employee) => e.employeeNumber === currentEmployeeNumber);
+          setCurrentEmployee(actualCurrent || roots[0] || null);
+
+          // Auto-expand: show root employees
+          setVisibleEmployees(new Set(roots.map((e: Employee) => e.employeeNumber)));
         } else {
-          console.error('Current employee not found:', currentEmployeeNumber);
-          console.error('Total employees in system:', allEmployees?.length);
-          console.error('Looking for employee number:', currentEmployeeNumber);
+          // Normal downstream view
+          const current = data.currentEmployee || allEmployees.find((e: Employee) => e.employeeNumber === currentEmployeeNumber);
 
-          // Try to find similar employee numbers for debugging
-          if (currentEmployeeNumber) {
-            const similar = allEmployees?.filter((e: Employee) =>
-              e.employeeNumber?.toLowerCase().includes(currentEmployeeNumber.toLowerCase()) ||
-              currentEmployeeNumber.toLowerCase().includes(e.employeeNumber?.toLowerCase())
-            );
-            console.error('Similar employee numbers found:', similar);
+          if (current) {
+            const downstreamEmployees = getDownstreamEmployees(allEmployees, current.employeeNumber);
+            setEmployees(downstreamEmployees);
+            setCurrentEmployee(current);
+            setVisibleEmployees(new Set([current.employeeNumber]));
+          } else {
+            console.error('Current employee not found:', currentEmployeeNumber);
+            setEmployees([]);
+            setCurrentEmployee(null);
           }
-
-          setEmployees([]);
-          setCurrentEmployee(null);
         }
       }
     } catch (error) {
@@ -337,9 +352,15 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber }
           {/* Header */}
           <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-4 rounded-t-2xl flex items-center justify-between flex-shrink-0">
             <div>
-              <h2 className="text-2xl font-bold text-white">Organization View</h2>
+              <h2 className="text-2xl font-bold text-white">
+                {verticalFilter
+                  ? `${verticalFilter === 'PW' ? 'Private Wealth' : verticalFilter} Vertical — Org View`
+                  : 'Organization View'}
+              </h2>
               <p className="text-indigo-100 text-sm mt-1">
-                Click ↑ to show manager • Click ↓ to show team
+                {verticalFilter
+                  ? `Showing all ${verticalFilter === 'PW' ? 'Private Wealth' : verticalFilter} employees • Click ↓ to expand team`
+                  : 'Click ↑ to show manager • Click ↓ to show team'}
               </p>
             </div>
             <button

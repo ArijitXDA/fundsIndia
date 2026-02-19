@@ -7,6 +7,8 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const employeeId = searchParams.get('employeeId');
+    // Optional: filter to a specific business unit (e.g. 'B2B', 'B2C', 'Private Wealth')
+    const businessUnitFilter = searchParams.get('businessUnit') || null;
 
     // Get all employees with their reporting structure
     // Paginate to bypass PostgREST's server-side max_rows limit (default 1000)
@@ -20,11 +22,18 @@ export async function GET(request: Request) {
       const from = page * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
 
-      const { data: batch, error: batchError, count } = await supabaseAdmin
+      let query = supabaseAdmin
         .from('employees')
         .select('*', { count: page === 0 ? 'exact' : 'planned' })
         .order('employee_number')
         .range(from, to);
+
+      // Apply vertical filter if provided
+      if (businessUnitFilter) {
+        query = query.eq('business_unit', businessUnitFilter);
+      }
+
+      const { data: batch, error: batchError, count } = await query;
 
       if (batchError) {
         return NextResponse.json({

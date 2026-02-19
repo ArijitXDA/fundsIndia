@@ -3,6 +3,9 @@ import { supabaseAdmin } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
+// Business units that belong to a specific vertical
+const VERTICAL_BUS = ['B2B', 'B2C', 'Private Wealth'];
+
 interface SalesBreakdown {
   mfSifMsci: number;
   cob100: number;
@@ -17,11 +20,11 @@ function emptyBreakdown(): SalesBreakdown {
 
 function addBreakdowns(a: SalesBreakdown, b: SalesBreakdown): SalesBreakdown {
   return {
-    mfSifMsci: a.mfSifMsci + b.mfSifMsci,
-    cob100: a.cob100 + b.cob100,
+    mfSifMsci:       a.mfSifMsci       + b.mfSifMsci,
+    cob100:          a.cob100          + b.cob100,
     aifPmsLasDynamo: a.aifPmsLasDynamo + b.aifPmsLasDynamo,
-    alternate: a.alternate + b.alternate,
-    total: a.total + b.total,
+    alternate:       a.alternate       + b.alternate,
+    total:           a.total           + b.total,
   };
 }
 
@@ -33,6 +36,11 @@ function getAllReporteeIds(empNumber: string, empMap: Map<string, string[]>): st
     all.push(...getAllReporteeIds(dr, empMap));
   }
   return all;
+}
+
+// Normalise emp ID for B2B lookup: DB stores '2690', sales table stores 'W2690'
+function b2bKey(id: string): string {
+  return id.startsWith('W') ? id : `W${id}`;
 }
 
 export async function GET(request: NextRequest) {
@@ -55,70 +63,83 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'User or employee not found' }, { status: 404 });
     }
 
-    const empNumber = user.employee.employee_number;
-    const businessUnit = user.employee.business_unit;
+    const empNumber   = user.employee.employee_number;  // e.g. "2690" (no W prefix)
+    const businessUnit = user.employee.business_unit;   // 'B2B' | 'B2C' | 'Private Wealth' | 'Corporate' | etc.
+    const workEmail   = (user.employee.work_email || '').trim().toLowerCase();
 
-    // 2. Fetch all B2B sales data (current month + YTD)
-    const [{ data: currentMonth }, { data: ytdData }] = await Promise.all([
+    // 2. Fetch all B2B sales data (MTD + prior-months YTD) in parallel with B2C
+    const [
+      { data: currentMonth },
+      { data: ytdData },
+      { data: b2cRows },
+      { data: allEmployees },
+    ] = await Promise.all([
       supabaseAdmin.from('b2b_sales_current_month').select('*'),
       supabaseAdmin.from('btb_sales_YTD_minus_current_month').select('*'),
+      supabaseAdmin.from('b2c').select('*'),
+      supabaseAdmin
+        .from('employees')
+        .select('employee_number, full_name, work_email, reporting_manager_emp_number, business_unit, employment_status')
+        .neq('employment_status', 'Inactive'),
     ]);
 
-    // 3. Build B2B sales map by employee ID
+    // 3. Build B2B sales map keyed by W-prefixed emp ID
     const b2bSalesMap = new Map<string, { mtd: SalesBreakdown; ytdPrev: SalesBreakdown; branch: string; zone: string }>();
 
     currentMonth?.forEach(row => {
-      const empId = row['RM Emp ID'];
-      if (!empId || empId === '#N/A') return;
-      if (!b2bSalesMap.has(empId)) {
-        b2bSalesMap.set(empId, { mtd: emptyBreakdown(), ytdPrev: emptyBreakdown(), branch: row['Branch'] || '', zone: row['Zone'] || '' });
+      const id = String(row['RM Emp ID'] || '').trim();
+      if (!id || id === '#N/A') return;
+      if (!b2bSalesMap.has(id)) {
+        b2bSalesMap.set(id, { mtd: emptyBreakdown(), ytdPrev: emptyBreakdown(), branch: row['Branch'] || '', zone: row['Zone'] || '' });
       }
-      const entry = b2bSalesMap.get(empId)!;
-      entry.mtd.mfSifMsci += parseFloat(row['MF+SIF+MSCI'] || 0);
-      entry.mtd.cob100 += parseFloat(row['COB (100%)'] || 0);
-      entry.mtd.aifPmsLasDynamo += parseFloat(row['AIF+PMS+LAS+DYNAMO (TRAIL)'] || 0);
-      entry.mtd.alternate += parseFloat(row['ALTERNATE'] || 0);
-      entry.mtd.total += parseFloat(row['Total Net Sales (COB 100%)'] || 0);
+      const e = b2bSalesMap.get(id)!;
+      e.mtd.mfSifMsci       += parseFloat(row['MF+SIF+MSCI'] || 0) || 0;
+      e.mtd.cob100          += parseFloat(row['COB (100%)'] || 0) || 0;
+      e.mtd.aifPmsLasDynamo += parseFloat(row['AIF+PMS+LAS+DYNAMO (TRAIL)'] || 0) || 0;
+      e.mtd.alternate       += parseFloat(row['ALTERNATE'] || 0) || 0;
+      e.mtd.total           += parseFloat(row['Total Net Sales (COB 100%)'] || 0) || 0;
     });
 
     ytdData?.forEach(row => {
-      const empId = row['RM Emp ID'];
-      if (!empId || empId === '#N/A') return;
-      if (!b2bSalesMap.has(empId)) {
-        b2bSalesMap.set(empId, { mtd: emptyBreakdown(), ytdPrev: emptyBreakdown(), branch: row['Branch'] || '', zone: row['Zone'] || '' });
+      const id = String(row['RM Emp ID'] || '').trim();
+      if (!id || id === '#N/A') return;
+      if (!b2bSalesMap.has(id)) {
+        b2bSalesMap.set(id, { mtd: emptyBreakdown(), ytdPrev: emptyBreakdown(), branch: row['Branch'] || '', zone: row['Zone'] || '' });
       }
-      const entry = b2bSalesMap.get(empId)!;
-      entry.ytdPrev.mfSifMsci += parseFloat(row['MF+SIF+MSCI'] || 0);
-      entry.ytdPrev.cob100 += parseFloat(row['COB (100%)'] || 0);
-      entry.ytdPrev.aifPmsLasDynamo += parseFloat(row['AIF+PMS+LAS+DYNAMO (TRAIL)'] || 0);
-      entry.ytdPrev.alternate += parseFloat(row['ALTERNATE'] || 0);
-      entry.ytdPrev.total += parseFloat(row['Total Net Sales (COB 100%)'] || 0);
+      const e = b2bSalesMap.get(id)!;
+      e.ytdPrev.mfSifMsci       += parseFloat(row['MF+SIF+MSCI'] || 0) || 0;
+      e.ytdPrev.cob100          += parseFloat(row['SUM of COB (100%)'] || row['COB (100%)'] || 0) || 0;
+      e.ytdPrev.aifPmsLasDynamo += parseFloat(row['SUM of AIF+PMS+LAS (TRAIL)'] || row['AIF+PMS+LAS+DYNAMO (TRAIL)'] || 0) || 0;
+      e.ytdPrev.alternate       += parseFloat(row['SUM of ALT'] || row['ALTERNATE'] || 0) || 0;
+      e.ytdPrev.total           += parseFloat(row['Total Net Sales (COB 100%)'] || 0) || 0;
     });
 
-    // 4. Fetch B2C data
-    const { data: b2cRows } = await supabaseAdmin.from('b2c').select('*');
-    const b2cByAdvisor = new Map<string, any>();
+    // 4. Build B2C map keyed by advisor email (lowercase)
+    //    The b2c.advisor column stores work email addresses.
+    const b2cByEmail = new Map<string, any>();
     b2cRows?.forEach(row => {
-      const advisor = (row.advisor || '').trim().toLowerCase();
-      if (!advisor) return;
-      b2cByAdvisor.set(advisor, {
-        netInflowMTD: parseFloat(row['net_inflow_mtd[cr]'] || 0),
-        netInflowYTD: parseFloat(row['net_inflow_ytd[cr]'] || 0),
-        currentAUM: parseFloat(row['current_aum_mtm [cr.]'] || 0),
-        aumGrowthPct: parseFloat(row['aum_growth_mtm %'] || 0),
-        assignedLeads: parseFloat(row.assigned_leads || 0),
-        newSIPInflowYTD: parseFloat(row['new_sip_inflow_ytd[cr.]'] || 0),
+      const key = (row.advisor || '').trim().toLowerCase();
+      if (!key) return;
+      b2cByEmail.set(key, {
+        netInflowMTD:   parseFloat(row['net_inflow_mtd[cr]']     || 0) || 0,
+        netInflowYTD:   parseFloat(row['net_inflow_ytd[cr]']     || 0) || 0,
+        currentAUM:     parseFloat(row['current_aum_mtm [cr.]']  || 0) || 0,
+        aumGrowthPct:   parseFloat(row['aum_growth_mtm %']       || 0) || 0,
+        assignedLeads:  parseFloat(row.assigned_leads            || 0) || 0,
+        newSIPInflowYTD:parseFloat(row['new_sip_inflow_ytd[cr.]']|| 0) || 0,
         team: row.team || '',
       });
     });
 
     // 5. Check if user has direct B2B sales data
-    const ownB2B = b2bSalesMap.get(empNumber);
+    //    Try W-prefixed key first (sales table format), then bare number
+    const ownB2B = b2bSalesMap.get(b2bKey(empNumber)) ?? b2bSalesMap.get(empNumber);
     if (ownB2B) {
       const ytdTotal = addBreakdowns(ownB2B.mtd, ownB2B.ytdPrev);
       return NextResponse.json({
         type: 'direct',
         vertical: 'B2B',
+        businessUnit,
         mtd: ownB2B.mtd,
         ytdTotal,
         branch: ownB2B.branch,
@@ -126,25 +147,18 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // 6. Check if user has direct B2C sales data (match by full_name)
-    const employeeName = (user.employee.full_name || '').trim().toLowerCase();
-    const ownB2C = b2cByAdvisor.get(employeeName);
+    // 6. Check if user has direct B2C sales data (match by work_email)
+    const ownB2C = b2cByEmail.get(workEmail);
     if (ownB2C) {
       return NextResponse.json({
         type: 'direct',
         vertical: 'B2C',
+        businessUnit,
         b2c: ownB2C,
       });
     }
 
-    // 7. User has no direct data — check if they are a manager
-    // Fetch all employees to build the reporting tree
-    const { data: allEmployees } = await supabaseAdmin
-      .from('employees')
-      .select('employee_number, full_name, reporting_manager_emp_number, business_unit, employment_status')
-      .eq('employment_status', 'Active');
-
-    // Build manager → direct reports map
+    // 7. Build manager → direct reports map (from all active/working employees)
     const managerToReports = new Map<string, string[]>();
     allEmployees?.forEach(emp => {
       if (emp.reporting_manager_emp_number) {
@@ -154,47 +168,46 @@ export async function GET(request: NextRequest) {
       }
     });
 
-    // Get all reportees (recursively) under this manager
+    // Get all reportees (recursively) under this employee
     const allReporteeIds = getAllReporteeIds(empNumber, managerToReports);
 
     if (allReporteeIds.length > 0) {
-      // Check B2B reportees
+      // Sum B2B numbers across all downstream reportees
       let teamMtd = emptyBreakdown();
       let teamYtdTotal = emptyBreakdown();
       let b2bReporteeCount = 0;
 
       for (const rid of allReporteeIds) {
-        const data = b2bSalesMap.get(rid);
+        const data = b2bSalesMap.get(b2bKey(rid)) ?? b2bSalesMap.get(rid);
         if (data) {
-          teamMtd = addBreakdowns(teamMtd, data.mtd);
-          const ytd = addBreakdowns(data.mtd, data.ytdPrev);
-          teamYtdTotal = addBreakdowns(teamYtdTotal, ytd);
+          teamMtd      = addBreakdowns(teamMtd, data.mtd);
+          teamYtdTotal = addBreakdowns(teamYtdTotal, addBreakdowns(data.mtd, data.ytdPrev));
           b2bReporteeCount++;
         }
       }
 
-      // Check B2C reportees (match by name)
-      const reporteeNameMap = new Map<string, string>();
+      // Sum B2C numbers for downstream reportees (match by work_email)
+      const reporteeEmailSet = new Set<string>();
       allEmployees?.forEach(emp => {
-        if (allReporteeIds.includes(emp.employee_number)) {
-          reporteeNameMap.set((emp.full_name || '').trim().toLowerCase(), emp.employee_number);
+        if (allReporteeIds.includes(emp.employee_number) && emp.work_email) {
+          reporteeEmailSet.add(emp.work_email.trim().toLowerCase());
         }
       });
 
-      let b2cTeamNetInflowMTD = 0;
-      let b2cTeamNetInflowYTD = 0;
-      let b2cTeamCurrentAUM = 0;
-      let b2cTeamLeads = 0;
-      let b2cTeamNewSIPYTD = 0;
-      let b2cReporteeCount = 0;
+      let b2cTeamNetInflowMTD  = 0;
+      let b2cTeamNetInflowYTD  = 0;
+      let b2cTeamCurrentAUM    = 0;
+      let b2cTeamLeads         = 0;
+      let b2cTeamNewSIPYTD     = 0;
+      let b2cReporteeCount     = 0;
 
-      b2cByAdvisor.forEach((data, advisorName) => {
-        if (reporteeNameMap.has(advisorName)) {
+      b2cByEmail.forEach((data, email) => {
+        if (reporteeEmailSet.has(email)) {
           b2cTeamNetInflowMTD += data.netInflowMTD;
           b2cTeamNetInflowYTD += data.netInflowYTD;
-          b2cTeamCurrentAUM += data.currentAUM;
-          b2cTeamLeads += data.assignedLeads;
-          b2cTeamNewSIPYTD += data.newSIPInflowYTD;
+          b2cTeamCurrentAUM   += data.currentAUM;
+          b2cTeamLeads        += data.assignedLeads;
+          b2cTeamNewSIPYTD    += data.newSIPInflowYTD;
           b2cReporteeCount++;
         }
       });
@@ -205,6 +218,7 @@ export async function GET(request: NextRequest) {
       if (hasB2BTeamData || hasB2CTeamData) {
         return NextResponse.json({
           type: 'manager',
+          businessUnit,
           reporteeCount: allReporteeIds.length,
           b2b: hasB2BTeamData ? {
             reporteeCount: b2bReporteeCount,
@@ -213,52 +227,103 @@ export async function GET(request: NextRequest) {
           } : null,
           b2c: hasB2CTeamData ? {
             reporteeCount: b2cReporteeCount,
-            netInflowMTD: b2cTeamNetInflowMTD,
-            netInflowYTD: b2cTeamNetInflowYTD,
-            currentAUM: b2cTeamCurrentAUM,
-            assignedLeads: b2cTeamLeads,
+            netInflowMTD:   b2cTeamNetInflowMTD,
+            netInflowYTD:   b2cTeamNetInflowYTD,
+            currentAUM:     b2cTeamCurrentAUM,
+            assignedLeads:  b2cTeamLeads,
             newSIPInflowYTD: b2cTeamNewSIPYTD,
           } : null,
         });
       }
     }
 
-    // 8. Non-sales employee — compute org-level totals
-    let orgMtdTotal = emptyBreakdown();
-    let orgYtdTotal = emptyBreakdown();
+    // 8. No personal or team data — support function employee
+    //    Rule:
+    //    (A) business_unit ∈ {B2B, B2C, Private Wealth}
+    //        → show only that vertical's performance
+    //    (B) any other business_unit (Corporate, Support Functions, etc.)
+    //        → show full org-level performance (B2B + B2C)
+
+    const isVerticalBU = VERTICAL_BUS.includes(businessUnit);
+
+    // Compute vertical-scoped B2B totals
+    // For B2B scope: all b2bSalesMap entries (they're all B2B RMs)
+    let scopedB2BMTD    = emptyBreakdown();
+    let scopedB2BYTDTot = emptyBreakdown();
+    let b2bRMCount      = 0;
     b2bSalesMap.forEach(entry => {
-      orgMtdTotal = addBreakdowns(orgMtdTotal, entry.mtd);
-      const ytd = addBreakdowns(entry.mtd, entry.ytdPrev);
-      orgYtdTotal = addBreakdowns(orgYtdTotal, ytd);
+      scopedB2BMTD    = addBreakdowns(scopedB2BMTD, entry.mtd);
+      scopedB2BYTDTot = addBreakdowns(scopedB2BYTDTot, addBreakdowns(entry.mtd, entry.ytdPrev));
+      b2bRMCount++;
     });
 
-    let orgB2CNetInflowMTD = 0;
-    let orgB2CNetInflowYTD = 0;
-    let orgB2CCurrentAUM = 0;
-    b2cByAdvisor.forEach(data => {
-      orgB2CNetInflowMTD += data.netInflowMTD;
-      orgB2CNetInflowYTD += data.netInflowYTD;
-      orgB2CCurrentAUM += data.currentAUM;
+    // Compute vertical-scoped B2C totals
+    let scopedB2CNetInflowMTD = 0;
+    let scopedB2CNetInflowYTD = 0;
+    let scopedB2CCurrentAUM   = 0;
+    let b2cAdvisorCount       = 0;
+    b2cByEmail.forEach(data => {
+      scopedB2CNetInflowMTD += data.netInflowMTD;
+      scopedB2CNetInflowYTD += data.netInflowYTD;
+      scopedB2CCurrentAUM   += data.currentAUM;
+      b2cAdvisorCount++;
     });
 
+    if (isVerticalBU) {
+      // (A) Vertical support function — show only their vertical's numbers
+      if (businessUnit === 'B2B') {
+        return NextResponse.json({
+          type: 'vertical-support',
+          businessUnit,
+          vertical: 'B2B',
+          label: 'B2B Vertical — Overall Performance',
+          totalRMs: b2bRMCount,
+          b2b: { mtd: scopedB2BMTD, ytdTotal: scopedB2BYTDTot },
+        });
+      }
+      if (businessUnit === 'B2C') {
+        return NextResponse.json({
+          type: 'vertical-support',
+          businessUnit,
+          vertical: 'B2C',
+          label: 'B2C Vertical — Overall Performance',
+          totalAdvisors: b2cAdvisorCount,
+          b2c: {
+            netInflowMTD: scopedB2CNetInflowMTD,
+            netInflowYTD: scopedB2CNetInflowYTD,
+            currentAUM:   scopedB2CCurrentAUM,
+          },
+        });
+      }
+      if (businessUnit === 'Private Wealth') {
+        // PW data not yet in system — show placeholder
+        return NextResponse.json({
+          type: 'vertical-support',
+          businessUnit,
+          vertical: 'PW',
+          label: 'Private Wealth — Overall Performance',
+          b2b: null,
+          b2c: null,
+        });
+      }
+    }
+
+    // (B) Non-vertical employee (Corporate, Support Functions, Group CEO, etc.)
+    //     → full org-level performance
     return NextResponse.json({
       type: 'non-sales',
-      totalB2BRMs: b2bSalesMap.size,
-      totalB2CAdvisors: b2cByAdvisor.size,
-      b2b: {
-        mtd: orgMtdTotal,
-        ytdTotal: orgYtdTotal,
-      },
+      businessUnit,
+      totalB2BRMs:      b2bRMCount,
+      totalB2CAdvisors: b2cAdvisorCount,
+      b2b: { mtd: scopedB2BMTD, ytdTotal: scopedB2BYTDTot },
       b2c: {
-        netInflowMTD: orgB2CNetInflowMTD,
-        netInflowYTD: orgB2CNetInflowYTD,
-        currentAUM: orgB2CCurrentAUM,
+        netInflowMTD: scopedB2CNetInflowMTD,
+        netInflowYTD: scopedB2CNetInflowYTD,
+        currentAUM:   scopedB2CCurrentAUM,
       },
     });
+
   } catch (error: any) {
-    return NextResponse.json({
-      error: 'Internal server error',
-      details: error.message,
-    }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error', details: error.message }, { status: 500 });
   }
 }

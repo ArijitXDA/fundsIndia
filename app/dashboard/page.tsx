@@ -262,13 +262,15 @@ export default function DashboardPage() {
                 <p className="text-indigo-100">
                   {myPerformance?.type === 'direct' && "Here's your performance overview"}
                   {myPerformance?.type === 'manager' && "Here's your team's combined performance"}
-                  {myPerformance?.type === 'non-sales' && "Non-Sales Employee — Org Level Performance"}
+                  {myPerformance?.type === 'non-sales' && "Org Level Performance — B2B & B2C"}
+                  {myPerformance?.type === 'vertical-support' && myPerformance?.label}
                   {!myPerformance && "Loading performance data..."}
                 </p>
               </div>
               {myPerformance?.type === 'direct' && <TrendingUp className="w-16 h-16 text-white/30" />}
               {myPerformance?.type === 'manager' && <UserCheck className="w-16 h-16 text-white/30" />}
               {myPerformance?.type === 'non-sales' && <Globe className="w-16 h-16 text-white/30" />}
+              {myPerformance?.type === 'vertical-support' && <BarChart3 className="w-16 h-16 text-white/30" />}
             </div>
 
             {/* TYPE: DIRECT — B2B performer */}
@@ -501,6 +503,113 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* TYPE: VERTICAL-SUPPORT — B2B/B2C/PW support employee sees only their vertical's aggregate */}
+            {myPerformance?.type === 'vertical-support' && (
+              <div className="mt-8 space-y-6">
+                <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20 flex items-center space-x-4 mb-2">
+                  <BarChart3 className="w-8 h-8 text-yellow-300" />
+                  <div>
+                    <p className="text-sm text-white/70">Vertical Summary</p>
+                    <p className="text-xl font-bold">
+                      {myPerformance.vertical === 'B2B' && `${myPerformance.totalRMs ?? 0} B2B RMs`}
+                      {myPerformance.vertical === 'B2C' && `${myPerformance.totalAdvisors ?? 0} B2C Advisors`}
+                      {myPerformance.vertical === 'PW' && 'Private Wealth'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* B2B Vertical — aggregate MTD + YTD */}
+                {myPerformance.vertical === 'B2B' && myPerformance.b2b && (
+                  <div className="space-y-6">
+                    <div>
+                      <h3 className="text-xl font-bold mb-4 text-white/90">B2B Vertical — MTD</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                          <p className="text-xs text-white/70 mb-1">MF+SIF+MSCI</p>
+                          <p className="text-2xl font-bold">{formatCrore(myPerformance.b2b.mtd?.mfSifMsci || 0)}</p>
+                        </div>
+                        <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                          <p className="text-xs text-white/70 mb-1">COB (100%)</p>
+                          <p className="text-2xl font-bold">{formatCrore(myPerformance.b2b.mtd?.cob100 || 0)}</p>
+                        </div>
+                        <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                          <p className="text-xs text-white/70 mb-1">AIF+PMS+LAS+DYNAMO</p>
+                          <p className="text-2xl font-bold">{formatCrore(myPerformance.b2b.mtd?.aifPmsLasDynamo || 0)}</p>
+                        </div>
+                        <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                          <p className="text-xs text-white/70 mb-1">ALTERNATE</p>
+                          <p className="text-2xl font-bold">{formatCrore(myPerformance.b2b.mtd?.alternate || 0)}</p>
+                        </div>
+                      </div>
+                      <div className="mt-4 bg-white/20 backdrop-blur-sm rounded-xl p-4 border border-white/30">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-semibold text-white/90">Total MTD Net Sales</span>
+                          <span className="text-3xl font-bold">{formatCrore(myPerformance.b2b.mtd?.total || 0)}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold mb-4 text-white/90">B2B Vertical — YTD</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                          <p className="text-xs text-white/70 mb-1">MF+SIF+MSCI</p>
+                          <p className="text-2xl font-bold">{formatCrore(myPerformance.b2b.ytdTotal?.mfSifMsci || 0)}</p>
+                        </div>
+                        <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                          <p className="text-xs text-white/70 mb-1">COB (100%)</p>
+                          <p className="text-2xl font-bold">{formatCrore(myPerformance.b2b.ytdTotal?.cob100 || 0)}</p>
+                        </div>
+                        <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                          <p className="text-xs text-white/70 mb-1">AIF+PMS+LAS+DYNAMO</p>
+                          <p className="text-2xl font-bold">{formatCrore(myPerformance.b2b.ytdTotal?.aifPmsLasDynamo || 0)}</p>
+                        </div>
+                        <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                          <p className="text-xs text-white/70 mb-1">ALTERNATE</p>
+                          <p className="text-2xl font-bold">{formatCrore(myPerformance.b2b.ytdTotal?.alternate || 0)}</p>
+                        </div>
+                      </div>
+                      <div className="mt-4 bg-white/20 backdrop-blur-sm rounded-xl p-4 border border-white/30">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-semibold text-white/90">Total YTD Net Sales</span>
+                          <span className="text-3xl font-bold">{formatCrore(myPerformance.b2b.ytdTotal?.total || 0)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* B2C Vertical — aggregate */}
+                {myPerformance.vertical === 'B2C' && myPerformance.b2c && (
+                  <div>
+                    <h3 className="text-xl font-bold mb-4 text-white/90">B2C Vertical — Overall</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                        <p className="text-xs text-white/70 mb-1">Net Inflow MTD</p>
+                        <p className="text-2xl font-bold">₹{(myPerformance.b2c.netInflowMTD || 0).toFixed(2)} Cr</p>
+                      </div>
+                      <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                        <p className="text-xs text-white/70 mb-1">Net Inflow YTD</p>
+                        <p className="text-2xl font-bold">₹{(myPerformance.b2c.netInflowYTD || 0).toFixed(2)} Cr</p>
+                      </div>
+                      <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                        <p className="text-xs text-white/70 mb-1">Current AUM</p>
+                        <p className="text-2xl font-bold">₹{(myPerformance.b2c.currentAUM || 0).toFixed(2)} Cr</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* PW Vertical — placeholder */}
+                {myPerformance.vertical === 'PW' && (
+                  <div className="bg-white/10 backdrop-blur-sm rounded-xl p-8 text-center border border-white/20">
+                    <Award className="w-16 h-16 text-white/40 mx-auto mb-4" />
+                    <p className="text-xl font-semibold mb-2">Private Wealth Data Coming Soon</p>
+                    <p className="text-white/70">PW performance metrics will appear here once data is available</p>
+                  </div>
+                )}
               </div>
             )}
 
@@ -978,6 +1087,7 @@ export default function DashboardPage() {
         isOpen={isOrgChartOpen}
         onClose={() => setIsOrgChartOpen(false)}
         currentEmployeeNumber={user?.employee?.employee_number || ''}
+        verticalFilter={myPerformance?.type === 'vertical-support' ? myPerformance.vertical : null}
       />
 
       {/* Change Password Toast Notification */}
