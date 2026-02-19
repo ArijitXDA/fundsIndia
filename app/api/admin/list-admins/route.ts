@@ -34,10 +34,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Not an admin' }, { status: 403 });
     }
 
+    // Return ALL admin rows (active + inactive) so the UI can show the full list
     const { data: admins, error } = await supabaseAdmin
       .from('admin_roles')
       .select('id, employee_id, email, tier, vertical, roles, can_impersonate, can_assign_admins, assigned_by, created_at, is_active')
-      .eq('is_active', true)
+      .order('is_active', { ascending: false })   // active first
       .order('created_at', { ascending: true });
 
     if (error) {

@@ -927,6 +927,7 @@ function UserManagementSection({ adminRole, showToast }: { adminRole: any; showT
   const [admins, setAdmins] = useState<any[]>([]);
   const [loadingAdmins, setLoadingAdmins] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [editingAdmin, setEditingAdmin] = useState<any>(null); // admin row being edited
 
   const fetchAdmins = () => {
     setLoadingAdmins(true);
@@ -950,15 +951,42 @@ function UserManagementSection({ adminRole, showToast }: { adminRole: any; showT
     else showToast('error', data.error || 'Failed to remove admin');
   };
 
+  const handleReactivate = async (admin: any) => {
+    const res = await fetch('/api/admin/assign-role', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: admin.email,
+        employeeId: admin.employee_id,
+        tier: admin.tier,
+        vertical: admin.vertical || null,
+        roles: admin.roles || [],
+      }),
+    });
+    const data = await res.json();
+    if (res.ok) { showToast('success', `Reactivated admin access for ${admin.email}`); fetchAdmins(); }
+    else showToast('error', data.error || 'Failed to reactivate admin');
+  };
+
+  const activeCount = admins.filter(a => a.is_active).length;
+  const inactiveCount = admins.filter(a => !a.is_active).length;
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">User Management</h2>
-          <p className="text-sm text-gray-500 mt-1">Manage admin roles and permissions</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Manage admin roles and permissions
+            {inactiveCount > 0 && (
+              <span className="ml-2 text-xs text-amber-600 font-medium">
+                · {activeCount} active, {inactiveCount} inactive
+              </span>
+            )}
+          </p>
         </div>
         <button
-          onClick={() => setShowAddForm(true)}
+          onClick={() => { setEditingAdmin(null); setShowAddForm(true); }}
           className="flex items-center space-x-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors shadow-sm"
         >
           <Plus className="w-4 h-4" />
@@ -966,11 +994,17 @@ function UserManagementSection({ adminRole, showToast }: { adminRole: any; showT
         </button>
       </div>
 
-      {showAddForm && (
+      {(showAddForm || editingAdmin) && (
         <AddAdminForm
           callerTier={adminRole.tier}
-          onClose={() => setShowAddForm(false)}
-          onSuccess={() => { setShowAddForm(false); fetchAdmins(); showToast('success', 'Admin role assigned successfully'); }}
+          editAdmin={editingAdmin}
+          onClose={() => { setShowAddForm(false); setEditingAdmin(null); }}
+          onSuccess={() => {
+            setShowAddForm(false);
+            setEditingAdmin(null);
+            fetchAdmins();
+            showToast('success', editingAdmin ? 'Admin updated successfully' : 'Admin role assigned successfully');
+          }}
           showToast={showToast}
         />
       )}
@@ -988,12 +1022,13 @@ function UserManagementSection({ adminRole, showToast }: { adminRole: any; showT
                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Tier</th>
                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Roles</th>
                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Assigned By</th>
-                <th className="px-6 py-3" />
+                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {admins.map(admin => (
-                <tr key={admin.id} className="hover:bg-gray-50 transition-colors">
+                <tr key={admin.id} className={`transition-colors ${admin.is_active ? 'hover:bg-gray-50' : 'bg-gray-50 opacity-70'}`}>
                   <td className="px-6 py-4">
                     <div>
                       <p className="font-medium text-gray-900">{admin.email}</p>
@@ -1007,31 +1042,63 @@ function UserManagementSection({ adminRole, showToast }: { adminRole: any; showT
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-wrap gap-1 max-w-xs">
-                      {admin.roles?.length === 13 ? (
-                        <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200">All 13 roles</span>
-                      ) : admin.roles?.map((r: number) => (
-                        <span key={r} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">Role {r}</span>
+                      {(admin.roles?.length ?? 0) >= 13 ? (
+                        <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200">All roles</span>
+                      ) : (admin.roles || []).map((r: number) => (
+                        <span key={r} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full" title={ROLE_LABELS[r]}>
+                          Role {r}
+                        </span>
                       ))}
                     </div>
                   </td>
                   <td className="px-6 py-4 text-gray-500 text-xs">{admin.assigned_by || '—'}</td>
-                  <td className="px-6 py-4 text-right">
-                    {admin.tier !== 'dev' || adminRole.tier === 'dev' ? (
-                      <button
-                        onClick={() => handleRemove(admin.email)}
-                        className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Remove admin"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                  <td className="px-6 py-4">
+                    {admin.is_active ? (
+                      <span className="inline-flex items-center text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">Active</span>
                     ) : (
-                      <span className="text-xs text-gray-300 px-2">Protected</span>
+                      <span className="inline-flex items-center text-xs font-medium text-gray-500 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full">Inactive</span>
                     )}
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center justify-end gap-1">
+                      {/* Edit button — always available if caller has permission */}
+                      {(admin.tier !== 'dev' || adminRole.tier === 'dev') && (
+                        <button
+                          onClick={() => { setEditingAdmin(admin); setShowAddForm(false); }}
+                          className="p-2 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                          title="Edit admin"
+                        >
+                          <UserCog className="w-4 h-4" />
+                        </button>
+                      )}
+                      {/* Deactivate / Reactivate */}
+                      {admin.is_active ? (
+                        admin.tier !== 'dev' || adminRole.tier === 'dev' ? (
+                          <button
+                            onClick={() => handleRemove(admin.email)}
+                            className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Deactivate admin"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        ) : (
+                          <span className="text-xs text-gray-300 px-2">Protected</span>
+                        )
+                      ) : (
+                        <button
+                          onClick={() => handleReactivate(admin)}
+                          className="p-2 text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors"
+                          title="Reactivate admin"
+                        >
+                          <CheckCircle className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
               {admins.length === 0 && (
-                <tr><td colSpan={5} className="px-6 py-12 text-center text-gray-400">No admins found</td></tr>
+                <tr><td colSpan={6} className="px-6 py-12 text-center text-gray-400">No admins found</td></tr>
               )}
             </tbody>
           </table>
@@ -1041,16 +1108,32 @@ function UserManagementSection({ adminRole, showToast }: { adminRole: any; showT
   );
 }
 
-// ── Add Admin Form ────────────────────────────────────────────────────────────
-function AddAdminForm({ callerTier, onClose, onSuccess, showToast }: { callerTier: string; onClose: () => void; onSuccess: () => void; showToast: Function }) {
+// ── Add / Edit Admin Form ─────────────────────────────────────────────────────
+function AddAdminForm({
+  callerTier, editAdmin, onClose, onSuccess, showToast,
+}: {
+  callerTier: string;
+  editAdmin: any | null;    // null = add mode, non-null = edit mode
+  onClose: () => void;
+  onSuccess: () => void;
+  showToast: Function;
+}) {
+  const isEdit = !!editAdmin;
+
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
-  const [selected, setSelected] = useState<any>(null);
-  const [tier, setTier] = useState('vertical');
-  const [vertical, setVertical] = useState('B2B');
-  const [roles, setRoles] = useState<number[]>([1,2,5,6,12]);
+  // In edit mode, pre-populate selected with the existing admin info
+  const [selected, setSelected] = useState<any>(
+    isEdit ? { full_name: editAdmin.email, employee_number: editAdmin.employee_id, work_email: editAdmin.email } : null
+  );
+  const [tier, setTier] = useState(isEdit ? editAdmin.tier : 'vertical');
+  const [vertical, setVertical] = useState(isEdit ? (editAdmin.vertical || 'B2B') : 'B2B');
+  const [roles, setRoles] = useState<number[]>(isEdit ? (editAdmin.roles || []) : [1,2,5,6,12]);
   const [submitting, setSubmitting] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
+
+  // In edit mode, don't auto-reset roles when tier/vertical changes
+  const [userChangedTier, setUserChangedTier] = useState(false);
 
   const searchEmployees = async (q: string) => {
     if (q.length < 2) { setResults([]); return; }
@@ -1062,15 +1145,17 @@ function AddAdminForm({ callerTier, onClose, onSuccess, showToast }: { callerTie
   };
 
   useEffect(() => {
+    if (isEdit) return;
     const t = setTimeout(() => searchEmployees(query), 300);
     return () => clearTimeout(t);
   }, [query]);
 
-  // Auto-update roles when tier/vertical changes
+  // Auto-update roles only when tier/vertical changes AND user explicitly changed it
   useEffect(() => {
+    if (!userChangedTier) return;
     const key = tier === 'vertical' ? `vertical-${vertical}` : tier;
     setRoles(TIER_ROLES[key] || []);
-  }, [tier, vertical]);
+  }, [tier, vertical, userChangedTier]);
 
   const handleSubmit = async () => {
     if (!selected) { showToast('error', 'Please select an employee'); return; }
@@ -1079,8 +1164,8 @@ function AddAdminForm({ callerTier, onClose, onSuccess, showToast }: { callerTie
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: selected.work_email,
-        employeeId: selected.employee_number,
+        email: isEdit ? editAdmin.email : selected.work_email,
+        employeeId: isEdit ? editAdmin.employee_id : selected.employee_number,
         tier,
         vertical: tier === 'vertical' ? vertical : null,
         roles,
@@ -1089,7 +1174,7 @@ function AddAdminForm({ callerTier, onClose, onSuccess, showToast }: { callerTie
     const data = await res.json();
     setSubmitting(false);
     if (res.ok) onSuccess();
-    else showToast('error', data.error || 'Failed to assign role');
+    else showToast('error', data.error || 'Failed to save admin role');
   };
 
   const availableTiers = callerTier === 'dev'
@@ -1099,60 +1184,75 @@ function AddAdminForm({ callerTier, onClose, onSuccess, showToast }: { callerTie
   return (
     <div className="bg-white border border-indigo-200 rounded-xl p-6 mb-6 shadow-sm">
       <div className="flex items-center justify-between mb-5">
-        <h3 className="text-lg font-semibold text-gray-900">Add New Admin</h3>
+        <h3 className="text-lg font-semibold text-gray-900">
+          {isEdit ? `Edit Admin — ${editAdmin.email}` : 'Add New Admin'}
+        </h3>
         <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
       </div>
 
-      {/* Employee Search */}
-      <div className="mb-4">
-        <label className="block text-sm font-medium text-gray-700 mb-1.5">Search Employee</label>
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            value={selected ? `${selected.full_name} (${selected.employee_number})` : query}
-            onChange={e => { setQuery(e.target.value); setSelected(null); }}
-            placeholder="Search by name, employee ID, or email..."
-            className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-          />
-          {searchLoading && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 animate-spin" />}
+      {/* Employee selection — locked in edit mode */}
+      {isEdit ? (
+        <div className="mb-4 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+          <p className="text-sm font-medium text-indigo-800">{editAdmin.email}</p>
+          <p className="text-xs text-indigo-600">Emp ID: {editAdmin.employee_id}</p>
         </div>
-        {results.length > 0 && !selected && (
-          <div className="border border-gray-200 rounded-lg mt-1 divide-y divide-gray-100 shadow-md bg-white z-10 relative">
-            {results.map(emp => (
-              <button key={emp.id} onClick={() => { setSelected(emp); setResults([]); setQuery(''); }}
-                className="w-full text-left px-4 py-3 hover:bg-indigo-50 transition-colors text-sm">
-                <p className="font-medium text-gray-900">{emp.full_name}</p>
-                <p className="text-xs text-gray-500">{emp.employee_number} · {emp.work_email} · {emp.business_unit}</p>
-              </button>
-            ))}
+      ) : (
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">Search Employee</label>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              value={selected ? `${selected.full_name} (${selected.employee_number})` : query}
+              onChange={e => { setQuery(e.target.value); setSelected(null); }}
+              placeholder="Search by name, employee ID, or email..."
+              className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            />
+            {searchLoading && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 animate-spin" />}
           </div>
-        )}
-        {selected && (
-          <div className="mt-2 bg-indigo-50 border border-indigo-200 rounded-lg p-3 flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-indigo-800">{selected.full_name}</p>
-              <p className="text-xs text-indigo-600">{selected.employee_number} · {selected.work_email}</p>
+          {results.length > 0 && !selected && (
+            <div className="border border-gray-200 rounded-lg mt-1 divide-y divide-gray-100 shadow-md bg-white z-10 relative">
+              {results.map(emp => (
+                <button key={emp.id} onClick={() => { setSelected(emp); setResults([]); setQuery(''); }}
+                  className="w-full text-left px-4 py-3 hover:bg-indigo-50 transition-colors text-sm">
+                  <p className="font-medium text-gray-900">{emp.full_name}</p>
+                  <p className="text-xs text-gray-500">{emp.employee_number} · {emp.work_email} · {emp.business_unit}</p>
+                </button>
+              ))}
             </div>
-            <button onClick={() => setSelected(null)} className="text-indigo-400 hover:text-indigo-600"><X className="w-4 h-4" /></button>
-          </div>
-        )}
-      </div>
+          )}
+          {selected && (
+            <div className="mt-2 bg-indigo-50 border border-indigo-200 rounded-lg p-3 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-indigo-800">{selected.full_name}</p>
+                <p className="text-xs text-indigo-600">{selected.employee_number} · {selected.work_email}</p>
+              </div>
+              <button onClick={() => setSelected(null)} className="text-indigo-400 hover:text-indigo-600"><X className="w-4 h-4" /></button>
+            </div>
+          )}
+        </div>
+      )}
 
-      {/* Tier Selection */}
+      {/* Tier + Vertical */}
       <div className="grid grid-cols-2 gap-4 mb-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1.5">Admin Tier</label>
-          <select value={tier} onChange={e => setTier(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg py-2.5 px-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+          <select
+            value={tier}
+            onChange={e => { setTier(e.target.value); setUserChangedTier(true); }}
+            className="w-full border border-gray-300 rounded-lg py-2.5 px-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+          >
             {availableTiers.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
         </div>
         {tier === 'vertical' && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">Vertical</label>
-            <select value={vertical} onChange={e => setVertical(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg py-2.5 px-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+            <select
+              value={vertical}
+              onChange={e => { setVertical(e.target.value); setUserChangedTier(true); }}
+              className="w-full border border-gray-300 rounded-lg py-2.5 px-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            >
               <option value="B2B">B2B</option>
               <option value="B2C">B2C</option>
               <option value="PW">Private Wealth</option>
@@ -1163,7 +1263,16 @@ function AddAdminForm({ callerTier, onClose, onSuccess, showToast }: { callerTie
 
       {/* Roles */}
       <div className="mb-5">
-        <label className="block text-sm font-medium text-gray-700 mb-2">Assigned Roles</label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-sm font-medium text-gray-700">Assigned Roles</label>
+          <div className="flex gap-2 text-xs">
+            <button onClick={() => setRoles(Object.keys(ROLE_LABELS).map(Number))}
+              className="text-indigo-600 hover:underline">Select all</button>
+            <span className="text-gray-300">|</span>
+            <button onClick={() => setRoles([])}
+              className="text-gray-500 hover:underline">Clear</button>
+          </div>
+        </div>
         <div className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-3 bg-gray-50">
           {Object.entries(ROLE_LABELS).map(([id, label]) => {
             const roleId = parseInt(id);
@@ -1174,7 +1283,7 @@ function AddAdminForm({ callerTier, onClose, onSuccess, showToast }: { callerTie
                   onChange={e => setRoles(e.target.checked ? [...roles, roleId] : roles.filter(r => r !== roleId))}
                   className="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
                 />
-                <span className="text-sm text-gray-700">{label}</span>
+                <span className="text-sm text-gray-700"><span className="text-gray-400 mr-1">#{roleId}</span>{label}</span>
               </label>
             );
           })}
@@ -1182,10 +1291,10 @@ function AddAdminForm({ callerTier, onClose, onSuccess, showToast }: { callerTie
       </div>
 
       <div className="flex items-center space-x-3">
-        <button onClick={handleSubmit} disabled={submitting || !selected}
+        <button onClick={handleSubmit} disabled={submitting || (!isEdit && !selected)}
           className="flex items-center space-x-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-sm font-medium rounded-lg transition-colors">
-          {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-          <span>{submitting ? 'Assigning...' : 'Assign Role'}</span>
+          {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : isEdit ? <UserCog className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+          <span>{submitting ? 'Saving...' : isEdit ? 'Save Changes' : 'Assign Role'}</span>
         </button>
         <button onClick={onClose} className="px-5 py-2.5 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">
           Cancel
