@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { X, ChevronDown, ChevronUp, Phone, Mail, Building2, TrendingUp, Users } from 'lucide-react';
+import { X, ChevronDown, ChevronUp, Phone, Mail, Building2, TrendingUp, Users, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 
 interface Employee {
   id: number;
@@ -31,9 +31,11 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber, 
   const [loading, setLoading] = useState(true);
   const [visibleEmployees, setVisibleEmployees] = useState<Set<string>>(new Set());
   const [currentEmployee, setCurrentEmployee] = useState<Employee | null>(null);
+  const [zoom, setZoom] = useState(1);
 
   useEffect(() => {
     if (isOpen) {
+      setZoom(1);
       fetchOrgData();
     }
   }, [isOpen, currentEmployeeNumber, verticalFilter]);
@@ -42,10 +44,8 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber, 
     try {
       setLoading(true);
 
-      // Build URL — include businessUnit filter for vertical-support users
       let url = `/api/org-hierarchy?employeeId=${currentEmployeeNumber}`;
       if (verticalFilter) {
-        // Map 'PW' back to 'Private Wealth' for the DB business_unit column
         const buParam = verticalFilter === 'PW' ? 'Private Wealth' : verticalFilter;
         url += `&businessUnit=${encodeURIComponent(buParam)}`;
       }
@@ -57,31 +57,22 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber, 
         const allEmployees = data.employees;
 
         if (verticalFilter) {
-          // Vertical view: show ALL employees of the vertical, starting from their top-most root(s)
-          // Find all root employees (no manager, or manager not in this vertical's list)
           const empNumbers = new Set(allEmployees.map((e: Employee) => e.employeeNumber));
           const roots = allEmployees.filter(
             (e: Employee) => !e.reportingManagerEmpNo || !empNumbers.has(e.reportingManagerEmpNo)
           );
-
           setEmployees(allEmployees);
-          // Set first root as "current" for display purposes; highlight actual current user if present
           const actualCurrent = allEmployees.find((e: Employee) => e.employeeNumber === currentEmployeeNumber);
           setCurrentEmployee(actualCurrent || roots[0] || null);
-
-          // Auto-expand: show root employees
           setVisibleEmployees(new Set(roots.map((e: Employee) => e.employeeNumber)));
         } else {
-          // Normal downstream view
           const current = data.currentEmployee || allEmployees.find((e: Employee) => e.employeeNumber === currentEmployeeNumber);
-
           if (current) {
             const downstreamEmployees = getDownstreamEmployees(allEmployees, current.employeeNumber);
             setEmployees(downstreamEmployees);
             setCurrentEmployee(current);
             setVisibleEmployees(new Set([current.employeeNumber]));
           } else {
-            console.error('Current employee not found:', currentEmployeeNumber);
             setEmployees([]);
             setCurrentEmployee(null);
           }
@@ -94,33 +85,25 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber, 
     }
   };
 
-  // Get all downstream employees (current + all subordinates recursively)
   const getDownstreamEmployees = (allEmployees: Employee[], rootEmpNo: string): Employee[] => {
     const downstream: Employee[] = [];
     const visited = new Set<string>();
-
     const collectDownstream = (empNo: string) => {
       if (visited.has(empNo)) return;
       visited.add(empNo);
-
       const employee = allEmployees.find((e: Employee) => e.employeeNumber === empNo);
       if (employee) {
         downstream.push(employee);
-
-        // Get all direct reports
         const reports = allEmployees.filter((e: Employee) => e.reportingManagerEmpNo === empNo);
         reports.forEach((report: Employee) => collectDownstream(report.employeeNumber));
       }
     };
-
     collectDownstream(rootEmpNo);
     return downstream;
   };
 
-  const toggleManager = (employeeNumber: string) => {
-    // Managers cannot be shown (only downstream allowed)
-    // Remove this functionality for access control
-    return;
+  const getDirectReports = (managerEmpNo: string): Employee[] => {
+    return employees.filter((emp: Employee) => emp.reportingManagerEmpNo === managerEmpNo);
   };
 
   const toggleDirectReports = (employeeNumber: string) => {
@@ -131,205 +114,247 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber, 
     const allVisible = directReports.every(r => newVisible.has(r.employeeNumber));
 
     if (allVisible) {
-      // Hide all direct reports
-      directReports.forEach((r: Employee) => newVisible.delete(r.employeeNumber));
+      // Collapse: recursively hide all descendants
+      const hideDescendants = (empNo: string) => {
+        const reports = getDirectReports(empNo);
+        reports.forEach(r => {
+          newVisible.delete(r.employeeNumber);
+          hideDescendants(r.employeeNumber);
+        });
+      };
+      hideDescendants(employeeNumber);
     } else {
-      // Show all direct reports
-      directReports.forEach((r: Employee) => newVisible.add(r.employeeNumber));
+      // Expand: show only direct reports (one level at a time)
+      directReports.forEach(r => newVisible.add(r.employeeNumber));
     }
     setVisibleEmployees(newVisible);
   };
 
-  const getDirectReports = (managerEmpNo: string) => {
-    return employees.filter((emp: Employee) => emp.reportingManagerEmpNo === managerEmpNo);
+  const getCardBorderColor = (emp: Employee, isCurrentUser: boolean): string => {
+    if (isCurrentUser) return 'border-indigo-500';
+    switch (emp.businessUnit) {
+      case 'B2B': return 'border-green-400';
+      case 'B2C': return 'border-orange-400';
+      case 'Private Wealth':
+      case 'PW': return 'border-blue-400';
+      default: return 'border-gray-300';
+    }
   };
 
-  const hasManager = (employeeNumber: string) => {
-    // Don't show manager arrow (downstream only access)
-    return false;
+  const getCardBg = (emp: Employee, isCurrentUser: boolean): string => {
+    if (isCurrentUser) return 'bg-gradient-to-br from-indigo-50 to-purple-50 ring-2 ring-indigo-300';
+    switch (emp.businessUnit) {
+      case 'B2B': return 'bg-green-50';
+      case 'B2C': return 'bg-orange-50';
+      case 'Private Wealth':
+      case 'PW': return 'bg-blue-50';
+      default: return 'bg-gray-50';
+    }
   };
 
-  const hasReports = (employeeNumber: string) => {
-    return getDirectReports(employeeNumber).length > 0;
+  const getBadgeColor = (bu: string): string => {
+    switch (bu) {
+      case 'B2B': return 'bg-green-100 text-green-700';
+      case 'B2C': return 'bg-orange-100 text-orange-700';
+      case 'Private Wealth':
+      case 'PW': return 'bg-blue-100 text-blue-700';
+      default: return 'bg-gray-100 text-gray-600';
+    }
   };
 
-  const isManagerVisible = (employeeNumber: string) => {
-    const employee = employees.find((e: Employee) => e.employeeNumber === employeeNumber);
-    return employee?.reportingManagerEmpNo ? visibleEmployees.has(employee.reportingManagerEmpNo) : false;
-  };
+  // ─── Recursive tree node renderer ────────────────────────────────────────────
+  //
+  // Structure per node:
+  //
+  //   [card + toggle button]          ← rendered by renderCard()
+  //        |                          ← vertical stem down (connector-stem)
+  //   ─────┼─────┬─────┬─────        ← horizontal bar (connector-bar)
+  //        |     |     |             ← vertical stubs up into each child
+  //      [c1]  [c2]  [c3]           ← child nodes (recursive)
+  //
+  // All lines are pure CSS divs — no SVG, no absolute positioning.
 
-  const areReportsVisible = (employeeNumber: string) => {
-    const directReports = getDirectReports(employeeNumber);
-    return directReports.length > 0 && directReports.every(r => visibleEmployees.has(r.employeeNumber));
-  };
-
-  const renderEmployeeCard = (employee: Employee, isCurrentUser: boolean = false) => {
-    const directReports = getDirectReports(employee.employeeNumber);
-    const managerVisible = isManagerVisible(employee.employeeNumber);
-    const reportsVisible = areReportsVisible(employee.employeeNumber);
-
-    // Get color based on business unit
-    const getCardColor = () => {
-      if (isCurrentUser) {
-        return 'bg-gradient-to-r from-indigo-50 to-purple-50 border-indigo-400 ring-2 ring-indigo-200';
-      }
-
-      switch (employee.businessUnit) {
-        case 'B2B':
-          return 'bg-green-50 border-green-200 hover:border-green-400';
-        case 'B2C':
-          return 'bg-orange-50 border-orange-200 hover:border-orange-400';
-        case 'Private Wealth':
-        case 'PW':
-          return 'bg-blue-50 border-blue-200 hover:border-blue-400';
-        default:
-          return 'bg-gray-50 border-gray-200 hover:border-gray-400';
-      }
-    };
+  const renderCard = (emp: Employee) => {
+    const isCurrentUser = emp.employeeNumber === currentEmployeeNumber;
+    const directReports = getDirectReports(emp.employeeNumber);
+    const hasReports = directReports.length > 0;
+    const reportsExpanded = hasReports && directReports.every(r => visibleEmployees.has(r.employeeNumber));
 
     return (
       <div className="flex flex-col items-center">
-        {/* Up Arrow */}
-        {hasManager(employee.employeeNumber) && (
-          <button
-            onClick={() => toggleManager(employee.employeeNumber)}
-            className="mb-2 w-8 h-8 flex items-center justify-center rounded-full bg-indigo-100 hover:bg-indigo-200 transition-colors shadow-sm"
-            title={managerVisible ? "Hide manager" : "Show manager"}
-          >
-            <ChevronUp className={`w-4 h-4 ${managerVisible ? 'text-indigo-700' : 'text-indigo-500'}`} />
-          </button>
-        )}
-
         {/* Employee Card */}
         <div
-          className={`relative rounded-lg shadow-lg transition-all duration-200 border-2 w-64 ${getCardColor()}`}
+          className={`rounded-xl shadow-md border-2 w-56 transition-all duration-200 hover:shadow-lg ${getCardBg(emp, isCurrentUser)} ${getCardBorderColor(emp, isCurrentUser)}`}
         >
           <div className="p-3">
-            {/* Header */}
-            <div className="flex items-start justify-between mb-2">
-              <h3 className="text-sm font-bold text-gray-900 flex-1 truncate leading-tight">{employee.name}</h3>
+            {/* Name row */}
+            <div className="flex items-start justify-between mb-1.5">
+              <h3 className="text-sm font-bold text-gray-900 leading-tight flex-1 truncate pr-1">{emp.name}</h3>
               {isCurrentUser && (
-                <span className="ml-1 px-2 py-0.5 bg-indigo-600 text-white text-[10px] font-semibold rounded-full">
-                  YOU
-                </span>
+                <span className="shrink-0 px-1.5 py-0.5 bg-indigo-600 text-white text-[9px] font-bold rounded-full">YOU</span>
               )}
             </div>
 
-            {/* Details */}
-            <div className="space-y-1.5 text-xs">
-              <div className="flex items-start">
-                <Building2 className="w-3 h-3 mr-1.5 text-gray-400 flex-shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-gray-900 truncate">{employee.designation}</div>
-                  <div className="text-[10px] text-gray-500 truncate">{employee.businessUnit}</div>
-                </div>
-              </div>
+            {/* Designation */}
+            <p className="text-[11px] text-gray-600 truncate mb-1.5">{emp.designation}</p>
 
-              <div className="flex items-center">
-                <TrendingUp className="w-3 h-3 mr-1.5 text-green-500 flex-shrink-0" />
-                <span className="font-semibold text-gray-900">₹{employee.teamYTD} Cr</span>
-                <span className="ml-1 text-gray-500">Team YTD</span>
-              </div>
+            {/* BU Badge */}
+            <span className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full mb-2 ${getBadgeColor(emp.businessUnit)}`}>
+              {emp.businessUnit}
+            </span>
 
-              <a
-                href={`tel:${employee.mobile}`}
-                className="flex items-center text-blue-600 hover:text-blue-800 transition-colors truncate"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <Phone className="w-3 h-3 mr-1.5 flex-shrink-0" />
-                <span className="truncate">{employee.mobile || 'N/A'}</span>
-              </a>
-
-              <a
-                href={`mailto:${employee.email}`}
-                className="flex items-center text-blue-600 hover:text-blue-800 transition-colors truncate"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <Mail className="w-3 h-3 mr-1.5 flex-shrink-0" />
-                <span className="truncate">{employee.email}</span>
-              </a>
-
-              {/* Team Size */}
-              {directReports.length > 0 && (
-                <div className="flex items-center text-[10px] text-gray-600 pt-1.5 border-t border-gray-200">
-                  <Users className="w-3 h-3 mr-1 text-gray-400" />
-                  <span className="font-medium">{directReports.length} Report{directReports.length !== 1 ? 's' : ''}</span>
-                </div>
-              )}
+            {/* Team YTD */}
+            <div className="flex items-center text-[11px] mb-1.5">
+              <TrendingUp className="w-3 h-3 mr-1 text-green-500 shrink-0" />
+              <span className="font-semibold text-gray-800">₹{emp.teamYTD} Cr</span>
+              <span className="ml-1 text-gray-500">Team YTD</span>
             </div>
+
+            {/* Contact */}
+            <div className="space-y-0.5 border-t border-gray-200 pt-1.5">
+              <a
+                href={`tel:${emp.mobile}`}
+                onClick={e => e.stopPropagation()}
+                className="flex items-center text-[11px] text-blue-600 hover:text-blue-800 truncate"
+              >
+                <Phone className="w-3 h-3 mr-1 shrink-0" />
+                <span className="truncate">{emp.mobile || 'N/A'}</span>
+              </a>
+              <a
+                href={`mailto:${emp.email}`}
+                onClick={e => e.stopPropagation()}
+                className="flex items-center text-[11px] text-blue-600 hover:text-blue-800 truncate"
+              >
+                <Mail className="w-3 h-3 mr-1 shrink-0" />
+                <span className="truncate">{emp.email}</span>
+              </a>
+            </div>
+
+            {/* Report count */}
+            {hasReports && (
+              <div className="flex items-center text-[10px] text-gray-500 mt-1.5 pt-1.5 border-t border-gray-200">
+                <Users className="w-3 h-3 mr-1 text-gray-400" />
+                <span>{directReports.length} direct report{directReports.length !== 1 ? 's' : ''}</span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Down Arrow */}
-        {hasReports(employee.employeeNumber) && (
+        {/* Expand / Collapse toggle button */}
+        {hasReports && (
           <button
-            onClick={() => toggleDirectReports(employee.employeeNumber)}
-            className="mt-2 w-8 h-8 flex items-center justify-center rounded-full bg-indigo-100 hover:bg-indigo-200 transition-colors shadow-sm"
-            title={reportsVisible ? "Hide team" : "Show team"}
+            onClick={() => toggleDirectReports(emp.employeeNumber)}
+            className={`mt-2 w-7 h-7 flex items-center justify-center rounded-full shadow-sm transition-all duration-200 border ${
+              reportsExpanded
+                ? 'bg-indigo-600 border-indigo-600 text-white hover:bg-indigo-700'
+                : 'bg-white border-indigo-300 text-indigo-600 hover:bg-indigo-50'
+            }`}
+            title={reportsExpanded ? `Collapse ${emp.name}'s team` : `Expand ${emp.name}'s team (${directReports.length})`}
           >
-            <ChevronDown className={`w-4 h-4 ${reportsVisible ? 'text-indigo-700' : 'text-indigo-500'}`} />
+            {reportsExpanded
+              ? <ChevronUp className="w-3.5 h-3.5" />
+              : <ChevronDown className="w-3.5 h-3.5" />
+            }
           </button>
         )}
       </div>
     );
   };
 
-  const renderHierarchy = () => {
-    if (!currentEmployee) return null;
-
-    // Build visible hierarchy tree
-    const layers: { employees: Employee[]; level: number }[] = [];
-    const processed = new Set<string>();
-
-    // Find all visible employees and their relationships
-    const visibleEmpList = employees.filter((e: Employee) => visibleEmployees.has(e.employeeNumber));
-
-    // Find the topmost visible employee
-    let topEmployee = visibleEmpList.find((e: Employee) =>
-      !e.reportingManagerEmpNo || !visibleEmployees.has(e.reportingManagerEmpNo)
-    );
-
-    if (!topEmployee) {
-      topEmployee = currentEmployee;
-    }
-
-    // Build layers recursively
-    const buildLayers = (employee: Employee, level: number) => {
-      if (processed.has(employee.employeeNumber)) return;
-
-      if (!layers[level]) {
-        layers[level] = { employees: [], level };
-      }
-
-      layers[level].employees.push(employee);
-      processed.add(employee.employeeNumber);
-
-      // Get visible direct reports
-      const directReports = getDirectReports(employee.employeeNumber)
-        .filter((r: Employee) => visibleEmployees.has(r.employeeNumber));
-
-      directReports.forEach((report: Employee) => buildLayers(report, level + 1));
-    };
-
-    buildLayers(topEmployee, 0);
+  const renderNode = (emp: Employee): React.ReactNode => {
+    const directReports = getDirectReports(emp.employeeNumber);
+    const visibleReports = directReports.filter(r => visibleEmployees.has(r.employeeNumber));
+    const hasVisibleReports = visibleReports.length > 0;
 
     return (
-      <div className="flex flex-col items-center space-y-8">
-        {layers.map((layer, idx) => (
-          <div key={idx} className="flex flex-col items-center">
-            {/* Employees in this layer */}
-            <div className="flex items-start justify-center gap-6 flex-wrap max-w-full">
-              {layer.employees.map((emp: Employee) => (
-                <div key={emp.employeeNumber}>
-                  {renderEmployeeCard(emp, emp.employeeNumber === currentEmployeeNumber)}
-                </div>
-              ))}
-            </div>
+      <div key={emp.employeeNumber} className="flex flex-col items-center">
+        {/* The card itself */}
+        {renderCard(emp)}
 
-            {/* Connection line to next layer */}
-            {idx < layers.length - 1 && layers[idx + 1].employees.length > 0 && (
-              <div className="w-0.5 h-6 bg-gray-300 my-2"></div>
+        {/* Connector + children — only rendered when this node is expanded */}
+        {hasVisibleReports && (
+          <div className="flex flex-col items-center w-full">
+
+            {/* Vertical stem down from the toggle button to the crossbar */}
+            <div className="w-px h-5 bg-gray-300" />
+
+            {visibleReports.length === 1 ? (
+              /* ── Single child: just a straight vertical line, no T-bar ── */
+              <div className="flex flex-col items-center">
+                <div className="w-px h-5 bg-gray-300" />
+                {renderNode(visibleReports[0])}
+              </div>
+            ) : (
+              /* ── Multiple children: T-bar connector ── */
+              <div className="flex flex-col items-center w-full">
+                {/*
+                  The T-bar is built as a flex row where each child gets:
+                    [half-crossbar] [vertical-stub] [half-crossbar]
+                  The crossbar halves of adjacent children visually merge
+                  into one continuous horizontal line.
+                */}
+                <div className="flex items-start">
+                  {visibleReports.map((child, idx) => {
+                    const isFirst = idx === 0;
+                    const isLast  = idx === visibleReports.length - 1;
+                    return (
+                      <div key={child.employeeNumber} className="flex flex-col items-center">
+                        {/* Crossbar row: left-arm | stub | right-arm */}
+                        <div className="flex items-center">
+                          {/* Left arm — invisible for the first child */}
+                          <div
+                            className="h-px bg-gray-300"
+                            style={{ width: isFirst ? 0 : '28px' }}
+                          />
+                          {/* Vertical stub down to child card */}
+                          <div className="w-px h-5 bg-gray-300" />
+                          {/* Right arm — invisible for the last child */}
+                          <div
+                            className="h-px bg-gray-300"
+                            style={{ width: isLast ? 0 : '28px' }}
+                          />
+                        </div>
+
+                        {/* Recursive child subtree, centred under its stub */}
+                        <div className="flex flex-col items-center px-3">
+                          {renderNode(child)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ─── Root rendering ───────────────────────────────────────────────────────────
+  // Find all top-level visible nodes (nodes whose manager is not visible)
+  const getRoots = (): Employee[] => {
+    return employees.filter(
+      emp =>
+        visibleEmployees.has(emp.employeeNumber) &&
+        (!emp.reportingManagerEmpNo || !visibleEmployees.has(emp.reportingManagerEmpNo))
+    );
+  };
+
+  const renderTree = (): React.ReactNode => {
+    const roots = getRoots();
+    if (roots.length === 0) return null;
+
+    if (roots.length === 1) {
+      return renderNode(roots[0]);
+    }
+
+    // Multiple roots (vertical filter with multiple top-level managers)
+    return (
+      <div className="flex items-start gap-10 flex-wrap justify-center">
+        {roots.map(root => (
+          <div key={root.employeeNumber}>
+            {renderNode(root)}
           </div>
         ))}
       </div>
@@ -341,14 +366,12 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber, 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden">
       {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black bg-opacity-50 transition-opacity"
-        onClick={onClose}
-      />
+      <div className="absolute inset-0 bg-black bg-opacity-50" onClick={onClose} />
 
       {/* Modal */}
       <div className="absolute inset-0 flex items-center justify-center p-4">
         <div className="relative bg-white rounded-2xl shadow-2xl w-full h-full max-w-[95vw] max-h-[95vh] flex flex-col">
+
           {/* Header */}
           <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-4 rounded-t-2xl flex items-center justify-between flex-shrink-0">
             <div>
@@ -357,22 +380,61 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber, 
                   ? `${verticalFilter === 'PW' ? 'Private Wealth' : verticalFilter} Vertical — Org View`
                   : 'Organization View'}
               </h2>
-              <p className="text-indigo-100 text-sm mt-1">
-                {verticalFilter
-                  ? `Showing all ${verticalFilter === 'PW' ? 'Private Wealth' : verticalFilter} employees • Click ↓ to expand team`
-                  : 'Click ↑ to show manager • Click ↓ to show team'}
+              <p className="text-indigo-100 text-sm mt-0.5">
+                Click <ChevronDown className="inline w-3.5 h-3.5" /> to expand a team &nbsp;•&nbsp; Click <ChevronUp className="inline w-3.5 h-3.5" /> to collapse
               </p>
             </div>
-            <button
-              onClick={onClose}
-              className="w-10 h-10 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 transition-colors"
-            >
-              <X className="w-6 h-6 text-white" />
-            </button>
+            <div className="flex items-center gap-2">
+              {/* Zoom controls */}
+              <button
+                onClick={() => setZoom(z => Math.max(0.4, +(z - 0.1).toFixed(1)))}
+                className="w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
+                title="Zoom out"
+              >
+                <ZoomOut className="w-4 h-4" />
+              </button>
+              <span className="text-white text-sm font-medium w-10 text-center">{Math.round(zoom * 100)}%</span>
+              <button
+                onClick={() => setZoom(z => Math.min(2, +(z + 0.1).toFixed(1)))}
+                className="w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
+                title="Zoom in"
+              >
+                <ZoomIn className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setZoom(1)}
+                className="w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors ml-1"
+                title="Reset zoom"
+              >
+                <Maximize2 className="w-4 h-4" />
+              </button>
+              <button
+                onClick={onClose}
+                className="w-10 h-10 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 transition-colors ml-2"
+              >
+                <X className="w-6 h-6 text-white" />
+              </button>
+            </div>
           </div>
 
-          {/* Content - Scrollable Hierarchy */}
-          <div className="flex-1 overflow-auto p-8">
+          {/* Legend */}
+          <div className="bg-gray-50 border-b border-gray-200 px-6 py-2 flex items-center gap-6 flex-shrink-0 flex-wrap">
+            <span className="text-xs text-gray-500 font-medium">Business Unit:</span>
+            {[
+              { label: 'B2B', color: 'bg-green-400' },
+              { label: 'B2C', color: 'bg-orange-400' },
+              { label: 'Private Wealth', color: 'bg-blue-400' },
+              { label: 'Corporate / Other', color: 'bg-gray-300' },
+            ].map(({ label, color }) => (
+              <div key={label} className="flex items-center gap-1.5">
+                <div className={`w-3 h-3 rounded-sm ${color}`} />
+                <span className="text-xs text-gray-600">{label}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Scrollable tree canvas */}
+          <div className="flex-1 overflow-auto">
             {loading ? (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center">
@@ -390,43 +452,36 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber, 
                       ? `Unable to find employee record for: ${currentEmployeeNumber}`
                       : 'Employee number not found in your profile'}
                   </p>
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-left">
-                    <p className="font-semibold text-yellow-800 mb-2">Possible Reasons:</p>
-                    <ul className="text-yellow-700 space-y-1 list-disc list-inside">
-                      <li>Your employee record may not be synced in the system</li>
-                      <li>Your employee number may be incorrect in the users table</li>
-                      <li>Please contact IT support for assistance</li>
-                    </ul>
-                  </div>
                 </div>
               </div>
             ) : (
-              <div className="min-h-full flex items-center justify-center">
-                {renderHierarchy()}
+              // The zoom wrapper — scales the whole tree from its top-centre
+              <div className="min-w-full min-h-full flex items-start justify-center p-10">
+                <div
+                  style={{
+                    transform: `scale(${zoom})`,
+                    transformOrigin: 'top center',
+                    transition: 'transform 0.2s ease',
+                  }}
+                >
+                  {renderTree()}
+                </div>
               </div>
             )}
           </div>
 
           {/* Footer */}
-          <div className="bg-gray-50 px-6 py-3 rounded-b-2xl border-t border-gray-200 flex-shrink-0">
-            <div className="flex items-center justify-between text-sm text-gray-600">
-              <div className="flex items-center space-x-4">
-                <div className="flex items-center">
-                  <ChevronUp className="w-4 h-4 mr-1 text-indigo-600" />
-                  <span>Show manager</span>
-                </div>
-                <div className="flex items-center">
-                  <ChevronDown className="w-4 h-4 mr-1 text-indigo-600" />
-                  <span>Show team</span>
-                </div>
-              </div>
-              <button
-                onClick={onClose}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors"
-              >
-                Close
-              </button>
-            </div>
+          <div className="bg-gray-50 px-6 py-3 rounded-b-2xl border-t border-gray-200 flex items-center justify-between flex-shrink-0">
+            <p className="text-xs text-gray-500">
+              {employees.length} employee{employees.length !== 1 ? 's' : ''} in view
+              {currentEmployee ? ` • Root: ${currentEmployee.name}` : ''}
+            </p>
+            <button
+              onClick={onClose}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              Close
+            </button>
           </div>
         </div>
       </div>
