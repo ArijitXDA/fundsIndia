@@ -132,8 +132,12 @@ export async function GET(request: NextRequest) {
     });
 
     // 5. Check if user has direct B2B sales data
-    //    Try W-prefixed key first (sales table format), then bare number
-    const ownB2B = b2bSalesMap.get(b2bKey(empNumber)) ?? b2bSalesMap.get(empNumber);
+    //    Only treat as a direct B2B performer if their business_unit is actually 'B2B'.
+    //    Non-vertical employees (Corporate, Group CEO, etc.) may appear in the B2B
+    //    sales table as rollup rows — we must NOT short-circuit for them.
+    const ownB2B = businessUnit === 'B2B'
+      ? (b2bSalesMap.get(b2bKey(empNumber)) ?? b2bSalesMap.get(empNumber))
+      : undefined;
     if (ownB2B) {
       const ytdTotal = addBreakdowns(ownB2B.mtd, ownB2B.ytdPrev);
       return NextResponse.json({
@@ -148,7 +152,10 @@ export async function GET(request: NextRequest) {
     }
 
     // 6. Check if user has direct B2C sales data (match by work_email)
-    const ownB2C = b2cByEmail.get(workEmail);
+    //    Same guard: only treat as direct B2C performer if business_unit is 'B2C'.
+    const ownB2C = businessUnit === 'B2C'
+      ? b2cByEmail.get(workEmail)
+      : undefined;
     if (ownB2C) {
       return NextResponse.json({
         type: 'direct',
