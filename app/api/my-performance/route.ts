@@ -68,20 +68,35 @@ export async function GET(request: NextRequest) {
     const workEmail   = (user.employee.work_email || '').trim().toLowerCase();
 
     // 2. Fetch all B2B sales data (MTD + prior-months YTD) in parallel with B2C
+    //    Note: allEmployees must be paginated — DB has 1167+ rows, Supabase caps
+    //    a single query at 1000 rows. Without pagination the last ~167 employees
+    //    (likely B2C advisors) are invisible, breaking B2C team aggregation.
     const [
       { data: currentMonth },
       { data: ytdData },
       { data: b2cRows },
-      { data: allEmployees },
     ] = await Promise.all([
       supabaseAdmin.from('b2b_sales_current_month').select('*'),
       supabaseAdmin.from('btb_sales_YTD_minus_current_month').select('*'),
       supabaseAdmin.from('b2c').select('*'),
-      supabaseAdmin
+    ]);
+
+    // Paginate employees to get all rows (bypasses 1000-row PostgREST limit)
+    const EMP_PAGE = 1000;
+    let allEmployees: any[] = [];
+    let empPage = 0;
+    while (true) {
+      const { data: batch } = await supabaseAdmin
         .from('employees')
         .select('employee_number, full_name, work_email, reporting_manager_emp_number, business_unit, employment_status')
-        .neq('employment_status', 'Inactive'),
-    ]);
+        .neq('employment_status', 'Inactive')
+        .order('employee_number')
+        .range(empPage * EMP_PAGE, (empPage + 1) * EMP_PAGE - 1);
+      if (!batch || batch.length === 0) break;
+      allEmployees = allEmployees.concat(batch);
+      if (batch.length < EMP_PAGE) break;
+      empPage++;
+    }
 
     // 3. Build B2B sales map keyed by W-prefixed emp ID
     const b2bSalesMap = new Map<string, { mtd: SalesBreakdown; ytdPrev: SalesBreakdown; branch: string; zone: string }>();
@@ -194,9 +209,11 @@ export async function GET(request: NextRequest) {
       }
 
       // Sum B2C numbers for downstream reportees (match by work_email)
+      // Use a Set for O(1) lookups instead of O(n) Array.includes()
+      const reporteeIdSet = new Set(allReporteeIds);
       const reporteeEmailSet = new Set<string>();
       allEmployees?.forEach(emp => {
-        if (allReporteeIds.includes(emp.employee_number) && emp.work_email) {
+        if (reporteeIdSet.has(emp.employee_number) && emp.work_email) {
           reporteeEmailSet.add(emp.work_email.trim().toLowerCase());
         }
       });
