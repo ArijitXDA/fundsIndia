@@ -269,8 +269,7 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         model,
         messages: currentMessages,
-        tools: availableTools,
-        tool_choice: 'auto',
+        ...(availableTools.length > 0 ? { tools: availableTools, tool_choice: 'auto' } : {}),
         temperature,
         top_p: topP,
         max_tokens: maxTokens,
@@ -369,8 +368,7 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         model,
         messages: currentMessages,
-        tools: availableTools.length > 0 ? availableTools : undefined,
-        tool_choice: availableTools.length > 0 ? 'none' : undefined,
+        ...(availableTools.length > 0 ? { tools: availableTools, tool_choice: 'none' } : {}),
         temperature,
         top_p: topP,
         max_tokens: maxTokens,
@@ -408,8 +406,9 @@ export async function POST(request: NextRequest) {
     body: JSON.stringify({
       model,
       messages: currentMessages,
-      // Force text-only response in final step — no more tool calls
-      tool_choice: 'none',
+      // Force text-only response in final step — no more tool calls.
+      // Only send tool_choice when tools are actually present (OpenAI 400s otherwise).
+      ...(availableTools.length > 0 ? { tools: availableTools, tool_choice: 'none' } : {}),
       temperature,
       top_p: topP,
       max_tokens: maxTokens,
