@@ -28,28 +28,61 @@ async function getDevAdmin(request: NextRequest) {
   return { userId, email: user.email };
 }
 
-// ── GET — list all access records with employee + persona details ─
+// ── Helper: hydrate access rows with employee + persona data ──────────────────
+// Avoids PostgREST join syntax entirely (bypasses schema cache issues)
+async function hydrateAccessRows(rows: any[]) {
+  if (!rows || rows.length === 0) return [];
+
+  // Collect unique IDs
+  const employeeIds = [...new Set(rows.map(r => r.employee_id).filter(Boolean))];
+  const personaIds  = [...new Set(rows.map(r => r.persona_id).filter(Boolean))];
+
+  // Parallel lookups
+  const [empResult, personaResult] = await Promise.all([
+    employeeIds.length > 0
+      ? supabaseAdmin
+          .from('employees')
+          .select('id, employee_number, full_name, work_email, job_title, business_unit')
+          .in('id', employeeIds)
+      : { data: [] },
+    personaIds.length > 0
+      ? supabaseAdmin
+          .from('agent_personas')
+          .select('id, name, tone, model, temperature')
+          .in('id', personaIds)
+      : { data: [] },
+  ]);
+
+  const empMap     = Object.fromEntries((empResult.data    ?? []).map((e: any) => [e.id, e]));
+  const personaMap = Object.fromEntries((personaResult.data ?? []).map((p: any) => [p.id, p]));
+
+  return rows.map(row => ({
+    ...row,
+    employee: empMap[row.employee_id]   ?? null,
+    persona:  personaMap[row.persona_id] ?? null,
+  }));
+}
+
+// ── GET — list all access records ────────────────────────────────────────────
 export async function GET(request: NextRequest) {
   const admin = await getDevAdmin(request);
   if (!admin) return NextResponse.json({ error: 'Dev admin access required' }, { status: 403 });
 
   const { data, error } = await supabaseAdmin
     .from('agent_access')
-    .select(`
-      *,
-      employee:employees(id, employee_number, full_name, work_email, job_title, business_unit),
-      persona:agent_personas(id, name, tone, model, temperature)
-    `)
+    .select('*')
     .order('granted_at', { ascending: false });
 
   if (error) {
     console.error('[agent/access GET] Supabase error:', error);
-    return NextResponse.json({ error: error.message, details: error.details, hint: error.hint }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
-  return NextResponse.json({ access: data });
+
+  const hydrated = await hydrateAccessRows(data ?? []);
+  return NextResponse.json({ access: hydrated });
 }
 
-// ── POST — grant agent access to an employee ──────────────────
+// ── POST — grant agent access to an employee ──────────────────────────────────
 export async function POST(request: NextRequest) {
   const admin = await getDevAdmin(request);
   if (!admin) return NextResponse.json({ error: 'Dev admin access required' }, { status: 403 });
@@ -100,21 +133,19 @@ export async function POST(request: NextRequest) {
       granted_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }, { onConflict: 'employee_id' })
-    .select(`
-      *,
-      employee:employees(id, employee_number, full_name, work_email, job_title, business_unit),
-      persona:agent_personas(id, name, tone, model, temperature)
-    `)
+    .select('*')
     .single();
 
   if (error) {
     console.error('[agent/access POST] Supabase error:', error);
-    return NextResponse.json({ error: error.message, details: error.details, hint: error.hint }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
-  return NextResponse.json({ access: data }, { status: 201 });
+
+  const [hydrated] = await hydrateAccessRows([data]);
+  return NextResponse.json({ access: hydrated }, { status: 201 });
 }
 
-// ── PUT — update access record ────────────────────────────────
+// ── PUT — update access record ────────────────────────────────────────────────
 export async function PUT(request: NextRequest) {
   const admin = await getDevAdmin(request);
   if (!admin) return NextResponse.json({ error: 'Dev admin access required' }, { status: 403 });
@@ -127,21 +158,19 @@ export async function PUT(request: NextRequest) {
     .from('agent_access')
     .update({ ...updates, updated_at: new Date().toISOString() })
     .eq('id', id)
-    .select(`
-      *,
-      employee:employees(id, employee_number, full_name, work_email, job_title, business_unit),
-      persona:agent_personas(id, name, tone, model, temperature)
-    `)
+    .select('*')
     .single();
 
   if (error) {
     console.error('[agent/access PUT] Supabase error:', error);
-    return NextResponse.json({ error: error.message, details: error.details, hint: error.hint }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
-  return NextResponse.json({ access: data });
+
+  const [hydrated] = await hydrateAccessRows([data]);
+  return NextResponse.json({ access: hydrated });
 }
 
-// ── DELETE — revoke access ────────────────────────────────────
+// ── DELETE — revoke access ────────────────────────────────────────────────────
 export async function DELETE(request: NextRequest) {
   const admin = await getDevAdmin(request);
   if (!admin) return NextResponse.json({ error: 'Dev admin access required' }, { status: 403 });
