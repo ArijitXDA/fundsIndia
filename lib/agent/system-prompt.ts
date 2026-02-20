@@ -281,11 +281,11 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 | employment_status | text | **'Working'** for active employees (NOT 'Active'). Filter: WHERE employment_status = 'Working' |
 
 #### gs_overall_aum — Monthly AUM by Business Segment (synced from Google Sheets)
-Aggregated monthly AUM figures. ⚠️ **Contains ONLY "B2B" and "B2C" segments — NO Private Wealth data exists in this table.** 24 months of data per segment (verified). If asked about Private Wealth AUM, say: "Private Wealth AUM data is not available in the current dataset — the sheet only covers B2B and B2C."
+Aggregated monthly AUM figures across B2B, B2C, and Private Wealth segments.
 | Column | Type | Notes |
 |---|---|---|
 | month | text | Period e.g. "2024-04" — filter with LIKE '2024%' for a year |
-| business_segment | text | Only "B2B" or "B2C" — no Private Wealth rows exist |
+| business_segment | text | "B2B", "B2C", or "Private Wealth" |
 | mf_aum_cr | numeric | MF AUM in Crores |
 | eq_aum | numeric | Equity AUM |
 | overall_aum | numeric | Total AUM in Crores |
@@ -298,14 +298,14 @@ Aggregated monthly AUM figures. ⚠️ **Contains ONLY "B2B" and "B2C" segments 
 | synced_at | timestamptz | When this row was last synced |
 
 #### gs_overall_sales — Daily Sales by Advisor/RM (synced from Google Sheets)
-Day-wise sales data per advisor/RM — 64k+ rows. ⚠️ **Contains ONLY "B2B" and "B2C" segments — NO Private Wealth data exists in this table.** If asked about Private Wealth historical sales, say: "Private Wealth sales history is not available in the current dataset."
+Day-wise sales data per advisor/RM — 64k+ rows covering all periods.
 | Column | Type | Notes |
 |---|---|---|
 | arn_rm | text | Advisor email or ARN identifier |
 | name | text | Advisor/RM full name |
 | team_region | text | Team tier e.g. "GOLD", "SILVER" |
 | zone | text | Zone name |
-| business_segment | text | Only "B2B" or "B2C" — no Private Wealth rows exist in this table |
+| business_segment | text | "B2B", "B2C", or "Private Wealth" |
 | daywise | text | Period e.g. "2024-04" — group by this for monthly trends |
 | users_count | integer | Total users |
 | reg_users_count | integer | Registered users |
@@ -652,10 +652,9 @@ Always use the available tools to fetch live data. Never guess or approximate nu
   - Any custom filter combination (zone + vertical + threshold)
   - "Vintage", "tenure", "how long", "when did they join" → use employees.date_joined
   - "Breakdown by department / location / gender / year joined" → GROUP BY on employees table
-  - "AUM trend", "monthly AUM", "overall AUM", "how has AUM changed", "B2B AUM", "B2C AUM" → use gs_overall_aum (B2B and B2C only — no PW data)
-  - "Historical sales", "month by month sales", "advisor performance over time", "SIP trend" → use gs_overall_sales (B2B and B2C only)
+  - "AUM trend", "monthly AUM", "overall AUM", "how has AUM changed" → use gs_overall_aum
+  - "Historical sales", "month by month sales", "advisor performance over time", "SIP trend" → use gs_overall_sales
   - "Compare B2B vs B2C over time", "segment-wise trend" → GROUP BY business_segment on gs_overall_aum or gs_overall_sales
-  - "Private Wealth AUM", "PW AUM", "PW trend", "PW historical sales" → tell the user: "Private Wealth data is not available in the current dataset (gs tables only cover B2B and B2C)"
 
 **NEVER say "I cannot access that data" or "I don't have access to individual figures" when query_database is available.** Use it. Write the SQL. Return the answer.
 

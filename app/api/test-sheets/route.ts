@@ -169,33 +169,52 @@ export async function GET() {
     }
   }
 
-  // 6. Deep-inspect overall_aum — fetch all rows, find distinct businesssegment values
+  // 6. Deep-inspect overall_aum — fetch ALL rows up to 500, check all columns for PW data
   try {
     const aumRes = await fetch(
-      `${SHEETS_BASE}/${sheetId}/values/${encodeURIComponent('overall_aum')}!A1:Z200`,
+      `${SHEETS_BASE}/${sheetId}/values/${encodeURIComponent('overall_aum')}!A1:AZ500`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     const aumData = await aumRes.json();
     if (aumData.values && aumData.values.length > 1) {
       const headers: string[] = aumData.values[0];
-      const segCol = headers.findIndex(h => h.toLowerCase().includes('segment') || h.toLowerCase().includes('business'));
-      const monthCol = headers.findIndex(h => h.toLowerCase() === 'month');
       const rows = aumData.values.slice(1);
+
+      // Find column indices
+      const segCol = headers.findIndex(h => h.toLowerCase().includes('segment') || h.toLowerCase() === 'businesssegment');
+      const monthCol = headers.findIndex(h => h.toLowerCase() === 'month');
+
+      // Count ALL values in the segment column (regardless of Month being filled)
       const segmentCounts: Record<string, number> = {};
       const sampleBySegment: Record<string, any> = {};
+      let rowsWithEmptyMonth = 0;
       for (const row of rows) {
         const seg = segCol >= 0 ? (row[segCol] ?? '(empty)') : '(col not found)';
+        const month = monthCol >= 0 ? (row[monthCol] ?? '') : '';
+        if (!month) rowsWithEmptyMonth++;
         segmentCounts[seg] = (segmentCounts[seg] ?? 0) + 1;
         if (!sampleBySegment[seg]) {
-          sampleBySegment[seg] = { month: monthCol >= 0 ? row[monthCol] : '?', raw_row: row.slice(0, 6) };
+          // Show more columns for diagnosis
+          sampleBySegment[seg] = {
+            month,
+            seg_raw: row[segCol],
+            all_cols: headers.reduce((acc: Record<string,string>, h, i) => { acc[h] = row[i] ?? ''; return acc; }, {}),
+          };
         }
       }
+
       results.overall_aum_segments = {
         total_data_rows: rows.length,
+        rows_with_empty_month: rowsWithEmptyMonth,
         headers_found: headers,
         segment_col_index: segCol,
-        distinct_segments: segmentCounts,
+        month_col_index: monthCol,
+        distinct_segments_all_rows: segmentCounts,
         sample_per_segment: sampleBySegment,
+        // Also show raw rows 45-55 in case PW is at the end
+        raw_rows_45_to_55: rows.slice(44, 55).map(r =>
+          headers.reduce((acc: Record<string,string>, h, i) => { acc[h] = r[i] ?? ''; return acc; }, {})
+        ),
       };
     } else {
       results.overall_aum_segments = { error: 'No data rows found or sheet fetch failed', raw: aumData };
