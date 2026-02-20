@@ -260,22 +260,23 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 | "fd_inflow_mtd[cr.]" | text→cast | Cast: \`NULLIF("fd_inflow_mtd[cr.]", '')::numeric\` |
 
 #### employees — Employee Directory
-⚠️ **employee_number is NOT W-prefixed here** — it is stored as a bare number (e.g. \`"1780"\`). B2B tables use a W-prefix (e.g. \`"W1780"\`). Do NOT join directly — strip the W prefix from B2B "RM Emp ID" when matching to employees.employee_number.
+⚠️ **employee_number already includes the W-prefix for B2B staff** — e.g. `"W1361"`, `"W1726D"`. The B2B "RM Emp ID" column also stores the same value. Join directly: \`e.employee_number = b."RM Emp ID"\` — do NOT use SUBSTRING or strip the W.
 ⚠️ **employment_status actual value is \`'Working'\`** (not \`'Active'\`). Always use \`WHERE employment_status = 'Working'\` to filter active employees.
+⚠️ **business_unit actual values**: \`'B2B'\`, \`'B2C'\`, \`'Private Wealth'\` (NOT 'PW'), \`'Corporate'\`, \`'Support Functions'\`.
 | Column | Type | Notes |
 |---|---|---|
-| employee_number | text | Bare number, NO W-prefix (e.g. "1780"). B2B tables use W-prefixed "W1780". |
+| employee_number | text | W-prefixed for B2B (e.g. "W1361"). Join to B2B tables: e.employee_number = "RM Emp ID" |
 | full_name | text | Display name |
 | work_email | text | Email address |
 | gender | text | |
 | location | text | City/office location |
-| business_unit | text | B2B, B2C, or PW |
+| business_unit | text | Actual values: 'B2B', 'B2C', 'Private Wealth', 'Corporate', 'Support Functions' |
 | department | text | Department name |
 | sub_department | text | Sub-department name |
 | job_title | text | Primary role title |
 | secondary_job_title | text | Secondary role title |
-| reporting_manager_emp_number | text | Manager's employee_number (also bare number, no W) |
-| date_joined | date | Date employee joined the company — use for vintage/tenure analysis |
+| reporting_manager_emp_number | text | Manager's employee_number |
+| date_joined | date | Date employee joined — use for vintage/tenure analysis |
 | exit_date | date | Date employee left (NULL if still employed) |
 | employment_status | text | **'Working'** for active employees (NOT 'Active'). Filter: WHERE employment_status = 'Working' |
 
@@ -284,7 +285,7 @@ Aggregated monthly AUM figures across B2B, B2C, and PW segments.
 | Column | Type | Notes |
 |---|---|---|
 | month | text | Period e.g. "2024-04" — filter with LIKE '2024%' for a year |
-| business_segment | text | "B2B", "B2C", or "PW" |
+| business_segment | text | "B2B", "B2C", or "Private Wealth" |
 | mf_aum_cr | numeric | MF AUM in Crores |
 | eq_aum | numeric | Equity AUM |
 | overall_aum | numeric | Total AUM in Crores |
@@ -342,7 +343,7 @@ Day-wise sales data per advisor/RM — 83k+ rows covering all periods.
    - **Any date column:** always filter with \`IS NOT NULL\` before EXTRACT or date arithmetic
    - **Any numeric column:** use \`COALESCE(col, 0)\` to treat NULLs as zero in sums
    - **employees.employment_status actual value is 'Working'** — ALWAYS use \`WHERE employment_status = 'Working'\` NOT 'Active'
-   - **employees.employee_number has NO W-prefix** (e.g. "1780") — B2B "RM Emp ID" has W-prefix (e.g. "W1780"). To join/match, strip W: \`SUBSTRING("RM Emp ID" FROM 2)\` = employee_number
+   - **employees.employee_number ALREADY includes the W-prefix for B2B staff** (e.g. "W1361", "W1726D"). "RM Emp ID" in B2B tables also has the W-prefix. Join DIRECTLY: \`e.employee_number = b."RM Emp ID"\` — do NOT use SUBSTRING or strip the W
    - **If a query returns 0 rows**, try removing WHERE filters one by one to find what's causing the empty result, then tell the user what you found (e.g. "date_joined is NULL for all employees")
 
 ### Example SQL Patterns — COPY THESE EXACTLY, they handle the text→numeric cast
@@ -448,7 +449,7 @@ SELECT
   ROUND(AVG(r.mtd_cr)::numeric, 2) as avg_mtd_cr,
   ROUND(SUM(r.mtd_cr)::numeric, 2) as total_mtd_cr
 FROM rm_mtd r
-JOIN emp_vintage v ON v.employee_number = SUBSTRING(r."RM Emp ID" FROM 2)
+JOIN emp_vintage v ON v.employee_number = r."RM Emp ID"
 GROUP BY v.vintage_band
 ORDER BY avg_mtd_cr DESC
 LIMIT 10
@@ -537,7 +538,7 @@ LIMIT 50
 
 **"Top 10 RMs with their names (join employees)"** — JOINS ARE ${allowJoins ? 'ALLOWED — example:' : 'NOT ALLOWED for your access level'}
 ${allowJoins ? `\`\`\`sql
--- Join pattern: strip W prefix from "RM Emp ID" to match employees.employee_number
+-- Join pattern: employee_number already has W-prefix (e.g. "W1361") — match directly to "RM Emp ID"
 WITH rm_totals AS (
   SELECT "RM Emp ID",
          SUM(NULLIF("Total Net Sales (COB 100%)", '')::numeric) as total_cr
@@ -550,11 +551,11 @@ SELECT
   e.job_title,
   ROUND(r.total_cr::numeric, 2) as total_cr
 FROM rm_totals r
-JOIN employees e ON e.employee_number = SUBSTRING(r."RM Emp ID" FROM 2)
+JOIN employees e ON e.employee_number = r."RM Emp ID"
 WHERE e.employment_status = 'Working'
 ORDER BY total_cr DESC
 LIMIT 10
-\`\`\`` : `Run two separate queries: first get RM IDs from b2b table, then look up names from employees (stripping W prefix: SUBSTRING("RM Emp ID" FROM 2) = employee_number).`}
+\`\`\`` : `Run two separate queries: first get RM IDs from b2b table, then look up names from employees using the exact same W-prefixed ID (e.g. WHERE employee_number = 'W1361'). Do NOT strip the W prefix.`}
 `;
 }
 

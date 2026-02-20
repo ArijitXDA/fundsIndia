@@ -119,30 +119,23 @@ function parseYtdRow(row: any) {
 }
 
 // ── Helper: resolve RM full names from employees table ────────────────────────
-// B2B sales tables store "RM Emp ID" as W-prefixed (e.g. "W1780"),
-// but employees.employee_number is stored as a bare number (e.g. "1780").
-// This helper strips the W prefix before querying, then re-maps results using
-// the W-prefixed key so callers can look up by original emp_id.
+// Diagnostic confirmed: employees.employee_number already stores the W-prefix
+// for B2B staff (e.g. "W1361"), matching exactly the "RM Emp ID" in B2B tables.
+// Some IDs also have trailing letters (e.g. "W1726D") — stored as-is in both.
+// DO NOT strip the W prefix — query directly with the original emp_id.
 async function resolveRmNames(empIds: string[]): Promise<Map<string, { full_name: string; job_title: string }>> {
   if (empIds.length === 0) return new Map();
 
-  // Strip W prefix for DB lookup (employees table stores bare numbers like "1780")
-  const stripped = empIds.map(id => id.startsWith('W') ? id.slice(1) : id);
-
+  // Query directly — employee_number matches "RM Emp ID" exactly (W-prefix included)
   const { data } = await supabaseAdmin
     .from('employees')
     .select('employee_number, full_name, job_title')
-    .in('employee_number', stripped)
-    .limit(stripped.length + 10);
+    .in('employee_number', empIds)
+    .limit(empIds.length + 10);
 
-  // Build map keyed by BOTH the bare number AND the W-prefixed version
-  // so callers using either format can find the result.
   const map = new Map<string, { full_name: string; job_title: string }>();
   for (const e of (data ?? [])) {
-    const bare = String(e.employee_number);
-    const val  = { full_name: e.full_name, job_title: e.job_title };
-    map.set(bare, val);            // bare key: "1780"
-    map.set(`W${bare}`, val);      // W-prefixed key: "W1780"
+    map.set(String(e.employee_number), { full_name: e.full_name, job_title: e.job_title });
   }
   return map;
 }

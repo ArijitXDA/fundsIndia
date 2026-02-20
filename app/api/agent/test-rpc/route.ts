@@ -51,26 +51,26 @@ export async function GET(_request: NextRequest) {
   // 11. YTD table access — must use double-quoted mixed-case name
   results.t11_ytd_table = await rpc(`SELECT COUNT(*) as rows FROM "btb_sales_YTD_minus_current_month" LIMIT 1`);
 
-  // 12. Vintage vs MTD performance — the key analysis query
-  results.t12_vintage_vs_perf = await rpc(`WITH emp_vintage AS (SELECT employee_number, CASE WHEN date_joined >= CURRENT_DATE - INTERVAL '1 year' THEN '0-1 yr' WHEN date_joined >= CURRENT_DATE - INTERVAL '3 years' THEN '1-3 yrs' WHEN date_joined >= CURRENT_DATE - INTERVAL '5 years' THEN '3-5 yrs' ELSE '5+ yrs' END as vintage_band FROM employees WHERE employment_status = 'Working' AND business_unit = 'B2B' AND date_joined IS NOT NULL), rm_mtd AS (SELECT "RM Emp ID", SUM(NULLIF("Total Net Sales (COB 100%)", '')::numeric) as mtd_cr FROM b2b_sales_current_month GROUP BY "RM Emp ID") SELECT v.vintage_band, COUNT(DISTINCT r."RM Emp ID") as rm_count, ROUND(AVG(r.mtd_cr)::numeric, 2) as avg_mtd_cr FROM rm_mtd r JOIN employees e ON e.employee_number = SUBSTRING(r."RM Emp ID" FROM 2) JOIN emp_vintage v ON v.employee_number = e.employee_number GROUP BY v.vintage_band ORDER BY avg_mtd_cr DESC LIMIT 10`);
+  // 12. FIXED: Vintage vs MTD performance — direct join (employee_number already has W-prefix)
+  results.t12_vintage_vs_perf = await rpc(`WITH emp_vintage AS (SELECT employee_number, CASE WHEN date_joined >= CURRENT_DATE - INTERVAL '1 year' THEN '0-1 yr' WHEN date_joined >= CURRENT_DATE - INTERVAL '3 years' THEN '1-3 yrs' WHEN date_joined >= CURRENT_DATE - INTERVAL '5 years' THEN '3-5 yrs' ELSE '5+ yrs' END as vintage_band FROM employees WHERE employment_status = 'Working' AND business_unit = 'B2B' AND date_joined IS NOT NULL), rm_mtd AS (SELECT "RM Emp ID", SUM(NULLIF("Total Net Sales (COB 100%)", '')::numeric) as mtd_cr FROM b2b_sales_current_month GROUP BY "RM Emp ID") SELECT v.vintage_band, COUNT(DISTINCT r."RM Emp ID") as rm_count, ROUND(AVG(r.mtd_cr)::numeric, 2) as avg_mtd_cr FROM rm_mtd r JOIN emp_vintage v ON v.employee_number = r."RM Emp ID" GROUP BY v.vintage_band ORDER BY avg_mtd_cr DESC LIMIT 10`);
 
-  // 13. W-prefix strip test — verify that SUBSTRING("RM Emp ID" FROM 2) matches employees.employee_number
-  results.t13_w_prefix_join = await rpc(`SELECT b."RM Emp ID", SUBSTRING(b."RM Emp ID" FROM 2) as bare_id, e.full_name, e.employee_number FROM b2b_sales_current_month b JOIN employees e ON e.employee_number = SUBSTRING(b."RM Emp ID" FROM 2) WHERE e.employment_status = 'Working' GROUP BY b."RM Emp ID", e.full_name, e.employee_number LIMIT 5`);
+  // 13. FIXED: Direct join test — employee_number = "RM Emp ID" (both W-prefixed, no SUBSTRING needed)
+  results.t13_direct_join = await rpc(`SELECT b."RM Emp ID", e.full_name, e.employee_number FROM b2b_sales_current_month b JOIN employees e ON e.employee_number = b."RM Emp ID" WHERE e.employment_status = 'Working' GROUP BY b."RM Emp ID", e.full_name, e.employee_number LIMIT 5`);
 
   // 14. Total active headcount (should be > 0 with 'Working' filter)
   results.t14_headcount = await rpc(`SELECT COUNT(*) as active_count, COUNT(date_joined) as with_date FROM employees WHERE employment_status = 'Working'`);
 
-  // 15. Distinct RM Emp IDs in b2b (sample) — see exact format
-  results.t15_b2b_rm_ids = await rpc(`SELECT DISTINCT "RM Emp ID", SUBSTRING("RM Emp ID" FROM 2) as stripped FROM b2b_sales_current_month LIMIT 5`);
+  // 15. Distinct RM Emp IDs in b2b (sample) — confirm W-prefix format
+  results.t15_b2b_rm_ids = await rpc(`SELECT DISTINCT "RM Emp ID" FROM b2b_sales_current_month LIMIT 5`);
 
-  // 16. Sample employee_numbers — see exact format
+  // 16. Sample employee_numbers for B2B — confirm W-prefix format
   results.t16_emp_numbers = await rpc(`SELECT employee_number, full_name, business_unit FROM employees WHERE employment_status = 'Working' AND business_unit = 'B2B' LIMIT 5`);
 
-  // 17. Does SUBSTRING strip actually match? Count join hits
-  results.t17_join_count = await rpc(`SELECT COUNT(*) as matched FROM b2b_sales_current_month b JOIN employees e ON e.employee_number = SUBSTRING(b."RM Emp ID" FROM 2)`);
+  // 17. FIXED: Direct join count — employee_number = "RM Emp ID" (should be > 0 now)
+  results.t17_direct_join_count = await rpc(`SELECT COUNT(*) as matched FROM b2b_sales_current_month b JOIN employees e ON e.employee_number = b."RM Emp ID"`);
 
-  // 18. Try LPAD match — maybe employee_number has leading zeros?
-  results.t18_lpad_match = await rpc(`SELECT COUNT(*) as matched FROM b2b_sales_current_month b JOIN employees e ON LPAD(e.employee_number, LENGTH(b."RM Emp ID")-1, '0') = SUBSTRING(b."RM Emp ID" FROM 2)`);
+  // 18. Broken SUBSTRING join count — EXPECT 0 (this confirms old approach was wrong)
+  results.t18_substring_join_broken = await rpc(`SELECT COUNT(*) as matched FROM b2b_sales_current_month b JOIN employees e ON e.employee_number = SUBSTRING(b."RM Emp ID" FROM 2)`);
 
   // 19. Vintage WITHOUT join — just employee tenure bands (no sales)
   results.t19_vintage_only = await rpc(`SELECT CASE WHEN date_joined >= CURRENT_DATE - INTERVAL '1 year' THEN '0-1 yr' WHEN date_joined >= CURRENT_DATE - INTERVAL '3 years' THEN '1-3 yrs' WHEN date_joined >= CURRENT_DATE - INTERVAL '5 years' THEN '3-5 yrs' ELSE '5+ yrs' END as vintage_band, COUNT(*) as headcount FROM employees WHERE employment_status = 'Working' AND business_unit = 'B2B' AND date_joined IS NOT NULL GROUP BY vintage_band ORDER BY headcount DESC`);
