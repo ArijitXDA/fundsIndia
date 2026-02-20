@@ -144,24 +144,29 @@ export async function GET() {
     return NextResponse.json(results);
   }
 
-  // 5. Fetch first 3 rows of first sheet to verify data access
-  try {
-    const firstSheet = results.sheet_meta.sheets?.[0]?.title;
-    if (firstSheet) {
+  // 5. Fetch headers + 2 sample rows from ALL sheets
+  const sheets: any[] = results.sheet_meta.sheets ?? [];
+  results.sheets_preview = {};
+
+  for (const sheet of sheets) {
+    try {
       const dataRes = await fetch(
-        `${SHEETS_BASE}/${sheetId}/values/${encodeURIComponent(firstSheet)}!A1:Z3`,
+        `${SHEETS_BASE}/${sheetId}/values/${encodeURIComponent(sheet.title)}!A1:Z3`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const data = await dataRes.json();
-      results.sample_data = {
-        status: data.error ? '❌ Failed' : '✅ Data readable',
-        range: data.range,
-        rows: data.values ?? [],
+      results.sheets_preview[sheet.title] = {
+        status: data.error ? '❌ Failed' : '✅ Readable',
+        headers: data.values?.[0] ?? [],
+        sample_row_1: data.values?.[1] ?? [],
+        sample_row_2: data.values?.[2] ?? [],
+        total_rows: sheet.rows,
+        total_cols: sheet.cols,
         error: data.error ?? undefined,
       };
+    } catch (e: any) {
+      results.sheets_preview[sheet.title] = { error: e.message };
     }
-  } catch (e: any) {
-    results.sample_data = { error: e.message };
   }
 
   return NextResponse.json(results, { status: 200 });
