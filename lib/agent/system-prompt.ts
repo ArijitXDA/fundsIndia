@@ -210,15 +210,16 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 
 #### b2b_sales_current_month — B2B MTD Sales (current month)
 ⚠️ **IMPORTANT:** This table has ONE ROW PER PARTNER (IFA/ARN) per RM. An RM can have 10–50+ rows. Always GROUP BY "RM Emp ID" and SUM sales columns to get RM-level totals. "Partner Name" is the IFA/ARN partner name — it is NOT the RM's own name.
+⚠️ **ALL SALES COLUMNS ARE STORED AS TEXT** — you MUST cast them to numeric before using SUM/AVG/comparisons. Use \`"Column Name"::numeric\` or \`NULLIF("Column Name", '')::numeric\` to handle empty strings.
 | Column | Type | Notes |
 |---|---|---|
 | "RM Emp ID" | text | W-prefixed employee ID (e.g. W1234) — the Relationship Manager |
 | "Partner Name" | text | IFA/ARN partner name — NOT the RM's name |
-| "MF+SIF+MSCI" | numeric | MF + SIF + MSCI sales in Cr |
-| "COB (100%)" | numeric | COB at 100% in Cr |
-| "AIF+PMS+LAS+DYNAMO (TRAIL)" | numeric | Alternate trail in Cr |
-| "ALTERNATE" | numeric | Alternate total in Cr |
-| "Total Net Sales (COB 100%)" | numeric | Grand total in Cr |
+| "MF+SIF+MSCI" | text→cast | Cast to numeric: \`"MF+SIF+MSCI"::numeric\` |
+| "COB (100%)" | text→cast | Cast to numeric: \`"COB (100%)"::numeric\` |
+| "AIF+PMS+LAS+DYNAMO (TRAIL)" | text→cast | Cast to numeric |
+| "ALTERNATE" | text→cast | Cast to numeric |
+| "Total Net Sales (COB 100%)" | text→cast | Cast to numeric: \`"Total Net Sales (COB 100%)"::numeric\` |
 | "Branch" | text | Branch name |
 | "Zone" | text | Zone name |
 
@@ -278,44 +279,71 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 3. B2C advisors map via email — use \`WHERE advisor = 'name@fundsindia.com'\`
 4. Always include \`LIMIT ${limit}\` unless the user explicitly asks for all rows
 5. Use specific tools (get_my_performance, get_rankings, etc.) for common queries — use query_database for statistical/aggregate questions
+6. **CRITICAL — b2b_sales_current_month sales columns are TEXT:** Always cast with \`::numeric\` before any math. Use \`NULLIF(col, '')::numeric\` to safely handle empty strings. Example: \`SUM(NULLIF("Total Net Sales (COB 100%)", '')::numeric)\`
 
-### Example SQL Patterns (use these as templates)
+### Example SQL Patterns — COPY THESE EXACTLY, they handle the text→numeric cast
 
 **"How many RMs are below average MTD sales?"**
 \`\`\`sql
-SELECT COUNT(DISTINCT "RM Emp ID") as below_average_count
-FROM b2b_sales_current_month
-WHERE "Total Net Sales (COB 100%)" < (
-  SELECT AVG("Total Net Sales (COB 100%)") FROM b2b_sales_current_month
-) LIMIT 1
-\`\`\`
-Note: b2b_sales_current_month has one row PER PARTNER per RM. To get RM-level totals first use a subquery:
-\`\`\`sql
 WITH rm_totals AS (
-  SELECT "RM Emp ID", SUM("Total Net Sales (COB 100%)") as total
-  FROM b2b_sales_current_month GROUP BY "RM Emp ID"
+  SELECT "RM Emp ID",
+         SUM(NULLIF("Total Net Sales (COB 100%)", '')::numeric) as total
+  FROM b2b_sales_current_month
+  GROUP BY "RM Emp ID"
 )
-SELECT COUNT(*) as below_avg FROM rm_totals
-WHERE total < (SELECT AVG(total) FROM rm_totals) LIMIT 1
+SELECT
+  COUNT(*) FILTER (WHERE total < (SELECT AVG(total) FROM rm_totals)) as below_avg,
+  COUNT(*) as total_rms,
+  ROUND((SELECT AVG(total) FROM rm_totals)::numeric, 2) as avg_cr
+FROM rm_totals
+LIMIT 1
 \`\`\`
 
-**"How many RMs are below median?"**
+**"How many RMs are below median MTD sales?"**
 \`\`\`sql
 WITH rm_totals AS (
-  SELECT "RM Emp ID", SUM("Total Net Sales (COB 100%)") as total
-  FROM b2b_sales_current_month GROUP BY "RM Emp ID"
+  SELECT "RM Emp ID",
+         SUM(NULLIF("Total Net Sales (COB 100%)", '')::numeric) as total
+  FROM b2b_sales_current_month
+  GROUP BY "RM Emp ID"
 ),
-med AS (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY total) as median FROM rm_totals)
-SELECT COUNT(*) as below_median FROM rm_totals, med WHERE total < median LIMIT 1
+stats AS (
+  SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY total) as median FROM rm_totals
+)
+SELECT
+  COUNT(*) FILTER (WHERE total < stats.median) as below_median,
+  COUNT(*) as total_rms,
+  ROUND(stats.median::numeric, 2) as median_cr
+FROM rm_totals, stats
+LIMIT 1
 \`\`\`
 
-**"How many B2C advisors are below average?"**
+**"Top 10 RMs by MTD sales"**
 \`\`\`sql
-SELECT COUNT(*) as below_avg FROM b2c
-WHERE "net_inflow_mtd[cr]" < (SELECT AVG("net_inflow_mtd[cr]") FROM b2c) LIMIT 1
+WITH rm_totals AS (
+  SELECT "RM Emp ID", "Zone", "Branch",
+         SUM(NULLIF("Total Net Sales (COB 100%)", '')::numeric) as total_cr
+  FROM b2b_sales_current_month
+  GROUP BY "RM Emp ID", "Zone", "Branch"
+)
+SELECT "RM Emp ID", "Zone", "Branch", ROUND(total_cr, 2) as total_cr
+FROM rm_totals
+ORDER BY total_cr DESC
+LIMIT 10
 \`\`\`
 
-**"Top 10 RMs with their names (join employees)"** — JOINS ARE ${allowJoins ? 'ALLOWED' : 'NOT ALLOWED for you — get RM IDs from b2b table, names from employees separately'}`;
+**"How many B2C advisors are below average?"** (b2c columns are already numeric)
+\`\`\`sql
+SELECT
+  COUNT(*) FILTER (WHERE "net_inflow_mtd[cr]" < (SELECT AVG("net_inflow_mtd[cr]") FROM b2c)) as below_avg,
+  COUNT(*) as total_advisors,
+  ROUND(AVG("net_inflow_mtd[cr]")::numeric, 2) as avg_cr
+FROM b2c
+LIMIT 1
+\`\`\`
+
+**"Top 10 RMs with their names (join employees)"** — JOINS ARE ${allowJoins ? 'ALLOWED' : 'NOT ALLOWED — run two separate queries: first get RM IDs from b2b table, then look up names from employees table'}
+`;
 }
 
 // ── Layer 4: Persona Behaviour ────────────────────────────────────────────────

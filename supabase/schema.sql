@@ -182,26 +182,29 @@ CREATE TABLE public.agent_memory (
 
 -- ── Data tables (sales / performance) ────────────────────────────────────────
 
+-- ⚠️ ALL SALES COLUMNS IN THIS TABLE ARE TEXT (stored as uploaded from CSV).
+-- Always cast to numeric before math: NULLIF(col, '')::numeric
+-- One row per IFA/ARN partner per RM — GROUP BY "RM Emp ID" for RM-level totals.
 CREATE TABLE public.b2b_sales_current_month (
   "Arn" text,
-  "Partner Name" text,
-  "MF+SIF+MSCI" text,
-  "COB (100%)" text,
+  "Partner Name" text,          -- IFA/ARN name, NOT the RM's own name
+  "MF+SIF+MSCI" text,           -- CAST TO NUMERIC before SUM/AVG
+  "COB (100%)" text,            -- CAST TO NUMERIC before SUM/AVG
   "COB (50%)" text,
-  "AIF+PMS+LAS+DYNAMO (TRAIL)" text,
+  "AIF+PMS+LAS+DYNAMO (TRAIL)" text,  -- CAST TO NUMERIC before SUM/AVG
   "MF Total (COB 100%)" text,
   "MF Total (COB 50%)" text,
-  "ALTERNATE" text,
+  "ALTERNATE" text,             -- CAST TO NUMERIC before SUM/AVG
   "ALT Total" text,
-  "Total Net Sales (COB 100%)" text,
+  "Total Net Sales (COB 100%)" text,  -- CAST TO NUMERIC before SUM/AVG
   "Total Net Sales (COB 50%)" text,
-  "RM" text,
+  "RM" text,                    -- RM name string (may be unreliable, use employees table)
   "BM" text,
   "Branch" text,
   "Zone" text,
   "RGM" text,
   "ZM" text,
-  "RM Emp ID" text
+  "RM Emp ID" text              -- W-prefixed RM employee ID, join key
 );
 
 CREATE TABLE public.btb_sales_YTD_minus_current_month (
