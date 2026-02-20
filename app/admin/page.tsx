@@ -8,7 +8,7 @@ import {
   CheckCircle, Trash2, Plus, LogIn, ChevronRight, X,
   Upload, FileSpreadsheet, Eye, RefreshCw, AlertTriangle,
   UserPlus, UserMinus, UserCheck, ChevronDown, ChevronUp,
-  Download, History, ChevronLeft, Filter, Bot,
+  Download, History, ChevronLeft, Filter, Bot, Sheet,
 } from 'lucide-react';
 import AgentManagement from '@/components/AgentManagement';
 
@@ -58,7 +58,7 @@ const TIER_COLORS: Record<string, string> = {
 };
 
 // ── Sidebar nav items ─────────────────────────────────────────────────────────
-type SectionId = 'user-mgmt' | 'impersonate' | 'b2b' | 'b2c' | 'pw' | 'employees' | 'contests' | 'activity-log' | 'agent';
+type SectionId = 'user-mgmt' | 'impersonate' | 'b2b' | 'b2c' | 'pw' | 'employees' | 'contests' | 'activity-log' | 'agent' | 'google-sheets';
 
 interface NavItem { id: SectionId; label: string; icon: any; roleIds?: number[]; devOnly?: boolean; assignAdminsOnly?: boolean; }
 
@@ -72,6 +72,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'contests',     label: 'Contests',          icon: Trophy,     roleIds: [11] },
   { id: 'activity-log', label: 'Activity Log',      icon: History,    devOnly: false, assignAdminsOnly: false },
   { id: 'agent',        label: 'FundsAgent',        icon: Bot,        devOnly: true },
+  { id: 'google-sheets', label: 'Google Sheets Sync', icon: Sheet,     devOnly: true },
 ];
 
 // Tiers that can see activity log (dev, super, co — not vertical)
@@ -245,6 +246,9 @@ export default function AdminPage() {
           )}
           {activeSection === 'agent' && (
             <AgentManagement showToast={showToast} />
+          )}
+          {activeSection === 'google-sheets' && (
+            <GoogleSheetsSyncSection showToast={showToast} />
           )}
         </main>
       </div>
@@ -1624,6 +1628,151 @@ function ActivityLogSection({ adminTier, showToast }: { adminTier: string; showT
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Google Sheets Sync Section ────────────────────────────────────────────────
+function GoogleSheetsSyncSection({ showToast }: { showToast: (type: 'success' | 'error', message: string) => void }) {
+  const [syncing, setSyncing] = useState<'all' | 'overall_aum' | 'overall_sales' | null>(null);
+  const [lastResult, setLastResult] = useState<any>(null);
+  const [syncLog, setSyncLog] = useState<any[]>([]);
+  const [logLoading, setLogLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/admin/sync-sheets')
+      .then(r => r.json())
+      .then(d => { setSyncLog(d.recent_syncs ?? []); setLogLoading(false); })
+      .catch(() => setLogLoading(false));
+  }, [lastResult]);
+
+  const runSync = async (tab?: string) => {
+    const key = (tab ?? 'all') as any;
+    setSyncing(key);
+    try {
+      const url = tab ? `/api/admin/sync-sheets?tab=${tab}` : '/api/admin/sync-sheets';
+      const res = await fetch(url, { method: 'POST' });
+      const data = await res.json();
+      setLastResult(data);
+      if (res.ok) {
+        const parts = [];
+        if (data.overall_aum) parts.push(`AUM: ${data.overall_aum.synced ?? 0} rows`);
+        if (data.overall_sales) parts.push(`Sales: ${data.overall_sales.synced ?? 0} rows`);
+        showToast('success', `Sync complete — ${parts.join(', ')}`);
+      } else {
+        showToast('error', data.error ?? 'Sync failed');
+      }
+    } catch (e: any) {
+      showToast('error', e.message ?? 'Sync failed');
+    }
+    setSyncing(null);
+  };
+
+  const fmtDate = (iso: string) => {
+    try { return new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); }
+    catch { return iso; }
+  };
+
+  return (
+    <div className="p-6 max-w-3xl space-y-6">
+      <div>
+        <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+          <Sheet className="w-5 h-5 text-green-600" />
+          Google Sheets Sync
+        </h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Syncs <strong>overall_aum</strong> and <strong>overall_sales</strong> tabs from the FI Consolidated Data sheet into Supabase.
+          Runs automatically every day at 2:00 AM via Vercel cron.
+        </p>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+        <h3 className="text-sm font-semibold text-gray-700">Manual Sync</h3>
+        <div className="flex flex-wrap gap-3">
+          <button
+            onClick={() => runSync()}
+            disabled={syncing !== null}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+          >
+            {syncing === 'all' ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            Sync All Tabs
+          </button>
+          <button
+            onClick={() => runSync('overall_aum')}
+            disabled={syncing !== null}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 text-indigo-700 text-sm font-medium rounded-lg border border-indigo-200 transition-colors"
+          >
+            {syncing === 'overall_aum' ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            Sync AUM Only
+          </button>
+          <button
+            onClick={() => runSync('overall_sales')}
+            disabled={syncing !== null}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 text-indigo-700 text-sm font-medium rounded-lg border border-indigo-200 transition-colors"
+          >
+            {syncing === 'overall_sales' ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            Sync Sales Only
+          </button>
+        </div>
+        {lastResult && (
+          <div className="mt-3 p-3 bg-gray-50 rounded-lg text-xs font-mono text-gray-700 overflow-auto max-h-48">
+            <pre>{JSON.stringify(lastResult, null, 2)}</pre>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">Sheet Details</h3>
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between">
+            <span className="text-gray-500">Spreadsheet</span>
+            <a href="https://docs.google.com/spreadsheets/d/1LkTeoRTSckH8s0Ow6PPXTiDyxzFByQzeUw7M0j5Q89k"
+              target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline font-medium">
+              FI Consolidated Data ↗
+            </a>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Tab: overall_aum</span>
+            <span className="text-gray-700">→ gs_overall_aum (~80 rows)</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Tab: overall_sales</span>
+            <span className="text-gray-700">→ gs_overall_sales (~83k rows)</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Auto-sync schedule</span>
+            <span className="text-gray-700">Daily at 2:00 AM (Vercel cron)</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">Recent Sync Log</h3>
+        {logLoading ? (
+          <div className="flex items-center gap-2 text-sm text-gray-400"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>
+        ) : syncLog.length === 0 ? (
+          <p className="text-sm text-gray-400">No syncs yet — run your first sync above.</p>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {syncLog.map((log: any) => (
+              <div key={log.id} className="py-2.5 flex items-center justify-between text-sm">
+                <div>
+                  <span className="font-medium text-gray-800">{log.sheet_tab}</span>
+                  <span className="ml-2 text-gray-500">{fmtDate(log.synced_at)}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-gray-500">{log.rows_synced}/{log.rows_total} rows</span>
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                    log.status === 'success' ? 'bg-green-100 text-green-700' :
+                    log.status === 'partial' ? 'bg-yellow-100 text-yellow-700' :
+                    'bg-red-100 text-red-700'
+                  }`}>{log.status}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

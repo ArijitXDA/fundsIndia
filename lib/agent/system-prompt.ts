@@ -274,6 +274,46 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 | exit_date | date | Date employee left (NULL if still employed) |
 | employment_status | text | **'Working'** for active employees (NOT 'Active'). Filter: WHERE employment_status = 'Working' |
 
+#### gs_overall_aum — Monthly AUM by Business Segment (synced from Google Sheets)
+Aggregated monthly AUM figures across B2B, B2C, and PW segments.
+| Column | Type | Notes |
+|---|---|---|
+| month | text | Period e.g. "2024-04" — filter with LIKE '2024%' for a year |
+| business_segment | text | "B2B", "B2C", or "PW" |
+| mf_aum_cr | numeric | MF AUM in Crores |
+| eq_aum | numeric | Equity AUM |
+| overall_aum | numeric | Total AUM in Crores |
+| sipinflow_cr | numeric | SIP inflow in Crores |
+| lumpsum_cr | numeric | Lumpsum inflow in Crores |
+| red_cr | numeric | Redemption in Crores |
+| net_cr | numeric | Net inflow in Crores |
+| monthly_net_sales | numeric | Net sales for the month |
+| overall_trail | numeric | Overall trail |
+| synced_at | timestamptz | When this row was last synced |
+
+#### gs_overall_sales — Daily Sales by Advisor/RM (synced from Google Sheets)
+Day-wise sales data per advisor/RM — 83k+ rows covering all periods.
+| Column | Type | Notes |
+|---|---|---|
+| arn_rm | text | Advisor email or ARN identifier |
+| name | text | Advisor/RM full name |
+| team_region | text | Team tier e.g. "GOLD", "SILVER" |
+| zone | text | Zone name |
+| business_segment | text | "B2B" or "B2C" |
+| daywise | text | Period e.g. "2024-04" — group by this for monthly trends |
+| users_count | integer | Total users |
+| reg_users_count | integer | Registered users |
+| accountholders_count | integer | Account holders |
+| firsttimeinvestors_count | integer | First-time investors |
+| sipinflow_amount | numeric | SIP inflow amount |
+| lumpsuminflow_amount | numeric | Lumpsum inflow |
+| redemption_amount | numeric | Redemption amount |
+| aum_amount | numeric | AUM |
+| cob_amount | numeric | COB amount |
+| switch_in_inflow | numeric | Switch-in inflow |
+| switch_out_inflow | numeric | Switch-out |
+| synced_at | timestamptz | When this row was last synced |
+
 #### targets — Performance Targets
 | Column | Type | Notes |
 |---|---|---|
