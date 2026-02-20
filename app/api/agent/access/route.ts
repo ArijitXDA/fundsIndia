@@ -161,12 +161,26 @@ export async function PUT(request: NextRequest) {
   if (!admin) return NextResponse.json({ error: 'Dev admin access required' }, { status: 403 });
 
   const body = await request.json();
-  const { id, ...updates } = body;
+  const { id } = body;
   if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
+
+  // Whitelist only valid agent_access columns — strip hydrated nested objects
+  // (employee, persona) and any other non-column fields sent by the UI
+  const ALLOWED_COLUMNS = new Set([
+    'persona_id', 'access_description', 'no_access_description',
+    'allowed_tables', 'denied_tables', 'column_filters', 'row_scope',
+    'override_can_proactively_surface_insights', 'override_can_make_recommendations',
+    'show_widget_on_dashboard', 'widget_greeting', 'is_active',
+    'can_query_database', 'query_db_config',
+  ]);
+  const safeUpdates: Record<string, any> = {};
+  for (const [k, v] of Object.entries(body)) {
+    if (k !== 'id' && ALLOWED_COLUMNS.has(k)) safeUpdates[k] = v;
+  }
 
   const { error: updateError } = await supabaseAdmin
     .from('agent_access')
-    .update({ ...updates, updated_at: new Date().toISOString() })
+    .update({ ...safeUpdates, updated_at: new Date().toISOString() })
     .eq('id', id);
 
   if (updateError) {
