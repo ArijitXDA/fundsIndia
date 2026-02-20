@@ -33,36 +33,57 @@ COMMENT ON COLUMN agent_access.query_db_config IS
   'JSON config controlling query_database guardrails: result_limit, allow_aggregates, allow_joins, blocked_columns';
 
 
--- ── Step 2: Create agent_readonly role ───────────────────────────────────────
--- This role has SELECT-only on the 5 data tables.
--- The RPC function runs as this role, so even if SQL injection bypasses text checks,
--- Postgres itself blocks any writes or access to agent/auth tables.
+-- ── Step 2: Create agent_readonly role + grant permissions ───────────────────
+-- Uses dynamic SQL to look up exact table names from information_schema,
+-- avoiding case-sensitivity issues with hardcoded quoted identifiers.
+-- The RPC function switches to this role at runtime via SET LOCAL ROLE.
 
 DO $$
+DECLARE
+  tbl TEXT;
+  tbl_pattern TEXT;
+  patterns TEXT[] := ARRAY[
+    'b2b_sales_current_month',
+    'btb_sales%ytd%current_month',
+    'b2c',
+    'employees',
+    'targets'
+  ];
+  sensitive TEXT[] := ARRAY[
+    'agent_access', 'agent_personas', 'agent_conversations',
+    'agent_messages', 'agent_memory', 'users'
+  ];
 BEGIN
+  -- Create role if it doesn't already exist
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'agent_readonly') THEN
     CREATE ROLE agent_readonly NOLOGIN;
   END IF;
+
+  -- Grant SELECT on data tables by pattern-matching real names from catalog
+  FOREACH tbl_pattern IN ARRAY patterns LOOP
+    FOR tbl IN
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_type = 'BASE TABLE'
+        AND LOWER(table_name) LIKE LOWER(tbl_pattern)
+    LOOP
+      EXECUTE format('GRANT SELECT ON %I TO agent_readonly', tbl);
+      RAISE NOTICE 'Granted SELECT on % to agent_readonly', tbl;
+    END LOOP;
+  END LOOP;
+
+  -- Revoke all on sensitive tables (belt-and-suspenders)
+  FOREACH tbl IN ARRAY sensitive LOOP
+    IF EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND LOWER(table_name) = LOWER(tbl)
+    ) THEN
+      EXECUTE format('REVOKE ALL ON %I FROM agent_readonly', tbl);
+    END IF;
+  END LOOP;
 END
 $$;
-
--- Grant SELECT on data tables only — NOT on agent_*, users, auth tables
--- NOTE: table names with uppercase letters MUST be double-quoted in SQL
--- (Postgres folds unquoted identifiers to lowercase)
-GRANT SELECT ON "b2b_sales_current_month"               TO agent_readonly;
-GRANT SELECT ON "btb_sales_YTD_minus_current_month"     TO agent_readonly;
-GRANT SELECT ON "b2c"                                   TO agent_readonly;
-GRANT SELECT ON "employees"                             TO agent_readonly;
-GRANT SELECT ON "targets"                               TO agent_readonly;
-
--- Explicitly revoke everything on sensitive tables (belt-and-suspenders)
--- These tables contain auth/config data — agent_readonly must never touch them
-REVOKE ALL ON "agent_access"        FROM agent_readonly;
-REVOKE ALL ON "agent_personas"      FROM agent_readonly;
-REVOKE ALL ON "agent_conversations" FROM agent_readonly;
-REVOKE ALL ON "agent_messages"      FROM agent_readonly;
-REVOKE ALL ON "agent_memory"        FROM agent_readonly;
-REVOKE ALL ON "users"               FROM agent_readonly;
 
 
 -- ── Step 3: Create agent_execute_query() RPC function ────────────────────────
