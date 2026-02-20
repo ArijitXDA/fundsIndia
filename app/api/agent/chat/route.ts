@@ -27,22 +27,28 @@ async function getAuthenticatedUser(request: NextRequest) {
   const sessionCookie = request.cookies.get('session');
   if (!sessionCookie) return null;
 
-  const { userId } = JSON.parse(sessionCookie.value);
+  const session = JSON.parse(sessionCookie.value);
+  const { userId, employeeId: sessionEmployeeId } = session;
 
-  // Fetch user (has employee_id FK column)
+  // Fetch user row
   const { data: user } = await supabaseAdmin
     .from('users')
     .select('id, email, employee_id')
     .eq('id', userId)
     .single();
 
-  if (!user?.employee_id) return null;
+  if (!user) return null;
 
-  // Fetch employee by PK — separate query avoids PostgREST join/schema cache issues
+  // Resolve employee ID — prefer DB value, fall back to session cookie
+  // (session cookie always has employeeId set at login/impersonation time)
+  const resolvedEmployeeId = user.employee_id ?? sessionEmployeeId ?? null;
+  if (!resolvedEmployeeId) return null;
+
+  // Fetch employee by PK
   const { data: employee } = await supabaseAdmin
     .from('employees')
     .select('id, employee_number, full_name, work_email, job_title, business_unit, department')
-    .eq('id', user.employee_id)
+    .eq('id', resolvedEmployeeId)
     .single();
 
   return { ...user, employee: employee ?? null };

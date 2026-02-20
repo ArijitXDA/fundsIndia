@@ -13,7 +13,8 @@ export async function GET(request: NextRequest) {
     const sessionCookie = request.cookies.get('session');
     if (!sessionCookie) return NextResponse.json({ config: null }, { status: 200 });
 
-    const { userId } = JSON.parse(sessionCookie.value);
+    const session = JSON.parse(sessionCookie.value);
+    const { userId, employeeId: sessionEmployeeId } = session;
 
     // Get user record
     const { data: user } = await supabaseAdmin
@@ -24,17 +25,19 @@ export async function GET(request: NextRequest) {
 
     if (!user) return NextResponse.json({ config: null });
 
-    // Get employee record via users.employee_id FK — separate query avoids PostgREST join issues
-    if (!user.employee_id) return NextResponse.json({ config: null });
+    // Resolve employee ID — prefer DB value, fall back to session cookie
+    const resolvedEmployeeId = user.employee_id ?? sessionEmployeeId ?? null;
+    if (!resolvedEmployeeId) return NextResponse.json({ config: null });
+
     const { data: employee } = await supabaseAdmin
       .from('employees')
       .select('id, employee_number, full_name, work_email, job_title, business_unit, department')
-      .eq('id', user.employee_id)
+      .eq('id', resolvedEmployeeId)
       .single();
 
     if (!employee) return NextResponse.json({ config: null });
 
-    const employeeId = employee.id;
+    const employeeId = employee.id; // canonical ID from employees table
 
     // Query view — fresh schema cache, bypasses stale agent_access cache
     const { data: access } = await supabaseAdmin
