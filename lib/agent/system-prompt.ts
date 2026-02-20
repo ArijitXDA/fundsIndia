@@ -238,7 +238,7 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 | "Zone" | text | Zone name |
 
 #### b2c — B2C Advisor Performance
-⚠️ Most columns are numeric, but some are stored as text — always cast with `NULLIF(col, '')::numeric` when doing math.
+⚠️ Most columns are numeric, but some are stored as text — always cast with \`NULLIF(col, '')::numeric\` when doing math.
 | Column | Type | Notes |
 |---|---|---|
 | advisor | text | Advisor work email address |
@@ -249,13 +249,13 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 | "aum_growth_mtm %" | numeric | AUM growth % (already numeric) |
 | assigned_leads | integer | Number of assigned leads (already integer) |
 | "new_sip_inflow_ytd[cr.]" | numeric | New SIP inflow YTD in Cr (already numeric) |
-| "msci_inflow_mtd[cr.]" | text→cast | Cast: NULLIF("msci_inflow_mtd[cr.]", '')::numeric |
-| "msci_inflow_ytd[cr.]" | text→cast | Cast: NULLIF("msci_inflow_ytd[cr.]", '')::numeric |
-| "fd_inflow_mtd[cr.]" | text→cast | Cast: NULLIF("fd_inflow_mtd[cr.]", '')::numeric |
+| "msci_inflow_mtd[cr.]" | text→cast | Cast: \`NULLIF("msci_inflow_mtd[cr.]", '')::numeric\` |
+| "msci_inflow_ytd[cr.]" | text→cast | Cast: \`NULLIF("msci_inflow_ytd[cr.]", '')::numeric\` |
+| "fd_inflow_mtd[cr.]" | text→cast | Cast: \`NULLIF("fd_inflow_mtd[cr.]", '')::numeric\` |
 
 #### employees — Employee Directory
-⚠️ **employee_number is NOT W-prefixed here** — it is stored as a bare number (e.g. `"1780"`). B2B tables use a W-prefix (e.g. `"W1780"`). Do NOT join directly — strip the W prefix from B2B "RM Emp ID" when matching to employees.employee_number.
-⚠️ **employment_status actual value is `'Working'`** (not `'Active'`). Always use `WHERE employment_status = 'Working'` to filter active employees.
+⚠️ **employee_number is NOT W-prefixed here** — it is stored as a bare number (e.g. \`"1780"\`). B2B tables use a W-prefix (e.g. \`"W1780"\`). Do NOT join directly — strip the W prefix from B2B "RM Emp ID" when matching to employees.employee_number.
+⚠️ **employment_status actual value is \`'Working'\`** (not \`'Active'\`). Always use \`WHERE employment_status = 'Working'\` to filter active employees.
 | Column | Type | Notes |
 |---|---|---|
 | employee_number | text | Bare number, NO W-prefix (e.g. "1780"). B2B tables use W-prefixed "W1780". |
