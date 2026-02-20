@@ -256,12 +256,16 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 | full_name | text | Display name |
 | work_email | text | Email address |
 | gender | text | |
-| location | text | City/location |
+| location | text | City/office location |
 | business_unit | text | B2B, B2C, or PW |
 | department | text | Department name |
-| job_title | text | Role title |
+| sub_department | text | Sub-department name |
+| job_title | text | Primary role title |
+| secondary_job_title | text | Secondary role title |
 | reporting_manager_emp_number | text | Manager's employee_number |
-| employment_status | text | Active or Inactive |
+| date_joined | date | Date employee joined the company — use for vintage/tenure analysis |
+| exit_date | date | Date employee left (NULL if still active) |
+| employment_status | text | 'Active' or 'Inactive' (filter with WHERE employment_status = 'Active') |
 
 #### targets — Performance Targets
 | Column | Type | Notes |
@@ -342,6 +346,38 @@ FROM b2c
 LIMIT 1
 \`\`\`
 
+**"Vintage / tenure analysis — how many employees joined in each year?"**
+\`\`\`sql
+SELECT
+  EXTRACT(YEAR FROM date_joined)::int as year_joined,
+  COUNT(*) as headcount,
+  business_unit
+FROM employees
+WHERE employment_status = 'Active'
+  AND date_joined IS NOT NULL
+GROUP BY EXTRACT(YEAR FROM date_joined), business_unit
+ORDER BY year_joined DESC
+LIMIT 50
+\`\`\`
+
+**"How many RMs have been with the company less than 1 year / 1-3 years / 3+ years?"**
+\`\`\`sql
+SELECT
+  CASE
+    WHEN date_joined >= CURRENT_DATE - INTERVAL '1 year' THEN 'Less than 1 year'
+    WHEN date_joined >= CURRENT_DATE - INTERVAL '3 years' THEN '1–3 years'
+    ELSE '3+ years'
+  END as tenure_band,
+  COUNT(*) as headcount
+FROM employees
+WHERE employment_status = 'Active'
+  AND business_unit = 'B2B'
+  AND date_joined IS NOT NULL
+GROUP BY tenure_band
+ORDER BY headcount DESC
+LIMIT 10
+\`\`\`
+
 **"Top 10 RMs with their names (join employees)"** — JOINS ARE ${allowJoins ? 'ALLOWED' : 'NOT ALLOWED — run two separate queries: first get RM IDs from b2b table, then look up names from employees table'}
 `;
 }
@@ -402,6 +438,8 @@ Always use the available tools to fetch live data. Never guess or approximate nu
   - "Rank by [specific column] with custom filters"
   - Any statistical, aggregate, or count-based question that get_rankings doesn't directly answer
   - Any custom filter combination (zone + vertical + threshold)
+  - "Vintage", "tenure", "how long", "when did they join" → use employees.date_joined
+  - "Breakdown by department / location / gender / year joined" → GROUP BY on employees table
 
 **NEVER say "I cannot access that data" or "I don't have access to individual figures" when query_database is available.** Use it. Write the SQL. Return the answer.
 
