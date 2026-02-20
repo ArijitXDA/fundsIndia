@@ -1263,13 +1263,14 @@ async function toolQueryDatabase(args: any, ctx: ToolContext) {
 
   const upper = sql.toUpperCase();
 
-  // Must be a SELECT
-  if (!/^\s*SELECT\b/.test(upper)) {
-    return { error: 'Only SELECT queries are permitted. Your query must start with SELECT.' };
+  // Must start with SELECT or WITH (CTEs: WITH ... AS (...) SELECT ...)
+  if (!/^\s*(SELECT|WITH)\b/.test(upper)) {
+    return { error: 'Only SELECT queries are permitted. Your query must start with SELECT or WITH.' };
   }
 
-  // Block DML/DDL at app layer too (defence in depth — RPC also blocks)
-  const dangerousKeywords = /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|COPY|EXECUTE|PERFORM)\b/;
+  // Block DML/DDL — but NOT "EXECUTE" since that blocks legitimate SQL keywords in column names
+  // and CTEs. The RPC function handles additional validation server-side.
+  const dangerousKeywords = /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|COPY|PERFORM)\b/;
   if (dangerousKeywords.test(upper)) {
     return { error: 'Disallowed SQL keyword detected. Only SELECT statements are permitted.' };
   }
