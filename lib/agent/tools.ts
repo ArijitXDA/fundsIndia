@@ -35,7 +35,7 @@ async function resolveAllowedEmployeeNumbers(
       const { data: batch } = await supabaseAdmin
         .from('employees')
         .select('employee_number, reporting_manager_emp_number, business_unit, employment_status')
-        .neq('employment_status', 'Inactive')
+        .eq('employment_status', 'Working')   // actual DB value is 'Working' not 'Active'
         .order('employee_number')
         .range(page * EMP_PAGE, (page + 1) * EMP_PAGE - 1);
       if (!batch || batch.length === 0) break;
@@ -119,19 +119,30 @@ function parseYtdRow(row: any) {
 }
 
 // ── Helper: resolve RM full names from employees table ────────────────────────
-// B2B sales tables only have "RM Emp ID" (W-prefixed) and "Partner Name" (IFA).
-// This batch-fetches the actual RM full_name + job_title from the employees table.
-// Returns a map of employee_number → { full_name, job_title }.
+// B2B sales tables store "RM Emp ID" as W-prefixed (e.g. "W1780"),
+// but employees.employee_number is stored as a bare number (e.g. "1780").
+// This helper strips the W prefix before querying, then re-maps results using
+// the W-prefixed key so callers can look up by original emp_id.
 async function resolveRmNames(empIds: string[]): Promise<Map<string, { full_name: string; job_title: string }>> {
   if (empIds.length === 0) return new Map();
+
+  // Strip W prefix for DB lookup (employees table stores bare numbers like "1780")
+  const stripped = empIds.map(id => id.startsWith('W') ? id.slice(1) : id);
+
   const { data } = await supabaseAdmin
     .from('employees')
     .select('employee_number, full_name, job_title')
-    .in('employee_number', empIds)
-    .limit(empIds.length + 10);
+    .in('employee_number', stripped)
+    .limit(stripped.length + 10);
+
+  // Build map keyed by BOTH the bare number AND the W-prefixed version
+  // so callers using either format can find the result.
   const map = new Map<string, { full_name: string; job_title: string }>();
   for (const e of (data ?? [])) {
-    map.set(String(e.employee_number), { full_name: e.full_name, job_title: e.job_title });
+    const bare = String(e.employee_number);
+    const val  = { full_name: e.full_name, job_title: e.job_title };
+    map.set(bare, val);            // bare key: "1780"
+    map.set(`W${bare}`, val);      // W-prefixed key: "W1780"
   }
   return map;
 }
@@ -774,7 +785,7 @@ async function toolGetEmployeeInfo(args: any, ctx: ToolContext) {
     .from('employees')
     .select('employee_number, full_name, job_title, business_unit, department, reporting_manager_emp_number, employment_status')
     .or(`full_name.ilike.%${q}%,employee_number.ilike.%${q}%`)
-    .neq('employment_status', 'Inactive')
+    .eq('employment_status', 'Working')   // actual DB value is 'Working' not 'Active'
     .limit(5);
 
   if (!data || data.length === 0) {
@@ -806,7 +817,7 @@ async function toolGetOrgStructure(args: any, ctx: ToolContext) {
     const { data: batch } = await supabaseAdmin
       .from('employees')
       .select('employee_number, full_name, job_title, business_unit, reporting_manager_emp_number, employment_status')
-      .neq('employment_status', 'Inactive')
+      .eq('employment_status', 'Working')   // actual DB value is 'Working' not 'Active'
       .order('employee_number')
       .range(page * EMP_PAGE, (page + 1) * EMP_PAGE - 1);
     if (!batch || batch.length === 0) break;

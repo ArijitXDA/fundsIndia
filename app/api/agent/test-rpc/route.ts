@@ -30,8 +30,8 @@ export async function GET(_request: NextRequest) {
   // 4. Sample employees rows — see actual date_joined value
   results.t4_employees_sample = await rpc(`SELECT employee_number, full_name, business_unit, date_joined, employment_status FROM employees LIMIT 3`);
 
-  // 5. How many employees have NULL date_joined?
-  results.t5_date_joined_nulls = await rpc(`SELECT COUNT(*) as total, COUNT(date_joined) as has_date, COUNT(*) - COUNT(date_joined) as null_date FROM employees WHERE employment_status = 'Active'`);
+  // 5. How many employees have NULL date_joined? (actual employment_status value is 'Working')
+  results.t5_date_joined_nulls = await rpc(`SELECT COUNT(*) as total, COUNT(date_joined) as has_date, COUNT(*) - COUNT(date_joined) as null_date FROM employees WHERE employment_status = 'Working'`);
 
   // 6. b2b columns — actual types
   results.t6_b2b_columns = await rpc(`SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'b2b_sales_current_month' ORDER BY ordinal_position`);
@@ -45,8 +45,14 @@ export async function GET(_request: NextRequest) {
   // 9. b2c columns
   results.t9_b2c_columns = await rpc(`SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'b2c' ORDER BY ordinal_position`);
 
-  // 10. Vintage query end-to-end
-  results.t10_vintage = await rpc(`SELECT EXTRACT(YEAR FROM date_joined)::int as year_joined, COUNT(*) as headcount FROM employees WHERE employment_status = 'Active' AND date_joined IS NOT NULL GROUP BY EXTRACT(YEAR FROM date_joined) ORDER BY year_joined DESC LIMIT 10`);
+  // 10. Vintage query end-to-end (using correct employment_status = 'Working')
+  results.t10_vintage = await rpc(`SELECT EXTRACT(YEAR FROM date_joined)::int as year_joined, COUNT(*) as headcount FROM employees WHERE employment_status = 'Working' AND date_joined IS NOT NULL GROUP BY EXTRACT(YEAR FROM date_joined) ORDER BY year_joined DESC LIMIT 10`);
+
+  // 11. W-prefix strip test — verify that SUBSTRING("RM Emp ID" FROM 2) matches employees.employee_number
+  results.t11_w_prefix_join = await rpc(`SELECT b."RM Emp ID", SUBSTRING(b."RM Emp ID" FROM 2) as bare_id, e.full_name, e.employee_number FROM b2b_sales_current_month b JOIN employees e ON e.employee_number = SUBSTRING(b."RM Emp ID" FROM 2) WHERE e.employment_status = 'Working' GROUP BY b."RM Emp ID", e.full_name, e.employee_number LIMIT 5`);
+
+  // 12. Total active headcount (should be > 0 with 'Working' filter)
+  results.t12_headcount = await rpc(`SELECT COUNT(*) as active_count, COUNT(date_joined) as with_date FROM employees WHERE employment_status = 'Working'`);
 
   return NextResponse.json(results, { status: 200 });
 }

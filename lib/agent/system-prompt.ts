@@ -238,21 +238,27 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 | "Zone" | text | Zone name |
 
 #### b2c — B2C Advisor Performance
+⚠️ Most columns are numeric, but some are stored as text — always cast with `NULLIF(col, '')::numeric` when doing math.
 | Column | Type | Notes |
 |---|---|---|
 | advisor | text | Advisor work email address |
 | team | text | Team name |
-| "net_inflow_mtd[cr]" | numeric | Net inflow MTD in Cr |
-| "net_inflow_ytd[cr]" | numeric | Net inflow YTD in Cr |
-| "current_aum_mtm [cr.]" | numeric | Current AUM in Cr |
-| "aum_growth_mtm %" | numeric | AUM growth % |
-| assigned_leads | integer | Number of assigned leads |
-| "new_sip_inflow_ytd[cr.]" | numeric | New SIP inflow YTD in Cr |
+| "net_inflow_mtd[cr]" | numeric | Net inflow MTD in Cr (already numeric) |
+| "net_inflow_ytd[cr]" | numeric | Net inflow YTD in Cr (already numeric) |
+| "current_aum_mtm [cr.]" | numeric | Current AUM in Cr (already numeric) |
+| "aum_growth_mtm %" | numeric | AUM growth % (already numeric) |
+| assigned_leads | integer | Number of assigned leads (already integer) |
+| "new_sip_inflow_ytd[cr.]" | numeric | New SIP inflow YTD in Cr (already numeric) |
+| "msci_inflow_mtd[cr.]" | text→cast | Cast: NULLIF("msci_inflow_mtd[cr.]", '')::numeric |
+| "msci_inflow_ytd[cr.]" | text→cast | Cast: NULLIF("msci_inflow_ytd[cr.]", '')::numeric |
+| "fd_inflow_mtd[cr.]" | text→cast | Cast: NULLIF("fd_inflow_mtd[cr.]", '')::numeric |
 
 #### employees — Employee Directory
+⚠️ **employee_number is NOT W-prefixed here** — it is stored as a bare number (e.g. `"1780"`). B2B tables use a W-prefix (e.g. `"W1780"`). Do NOT join directly — strip the W prefix from B2B "RM Emp ID" when matching to employees.employee_number.
+⚠️ **employment_status actual value is `'Working'`** (not `'Active'`). Always use `WHERE employment_status = 'Working'` to filter active employees.
 | Column | Type | Notes |
 |---|---|---|
-| employee_number | text | W-prefixed (e.g. W1234) |
+| employee_number | text | Bare number, NO W-prefix (e.g. "1780"). B2B tables use W-prefixed "W1780". |
 | full_name | text | Display name |
 | work_email | text | Email address |
 | gender | text | |
@@ -262,10 +268,10 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 | sub_department | text | Sub-department name |
 | job_title | text | Primary role title |
 | secondary_job_title | text | Secondary role title |
-| reporting_manager_emp_number | text | Manager's employee_number |
+| reporting_manager_emp_number | text | Manager's employee_number (also bare number, no W) |
 | date_joined | date | Date employee joined the company — use for vintage/tenure analysis |
-| exit_date | date | Date employee left (NULL if still active) |
-| employment_status | text | 'Active' or 'Inactive' (filter with WHERE employment_status = 'Active') |
+| exit_date | date | Date employee left (NULL if still employed) |
+| employment_status | text | **'Working'** for active employees (NOT 'Active'). Filter: WHERE employment_status = 'Working' |
 
 #### targets — Performance Targets
 | Column | Type | Notes |
@@ -289,6 +295,8 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
    - **Any column that might be text but you need as date:** use \`col::date\` or \`TO_DATE(col, 'YYYY-MM-DD')\`
    - **Any date column:** always filter with \`IS NOT NULL\` before EXTRACT or date arithmetic
    - **Any numeric column:** use \`COALESCE(col, 0)\` to treat NULLs as zero in sums
+   - **employees.employment_status actual value is 'Working'** — ALWAYS use \`WHERE employment_status = 'Working'\` NOT 'Active'
+   - **employees.employee_number has NO W-prefix** (e.g. "1780") — B2B "RM Emp ID" has W-prefix (e.g. "W1780"). To join/match, strip W: \`SUBSTRING("RM Emp ID" FROM 2)\` = employee_number
    - **If a query returns 0 rows**, try removing WHERE filters one by one to find what's causing the empty result, then tell the user what you found (e.g. "date_joined is NULL for all employees")
 
 ### Example SQL Patterns — COPY THESE EXACTLY, they handle the text→numeric cast
@@ -359,7 +367,7 @@ SELECT
   COUNT(*) as headcount,
   business_unit
 FROM employees
-WHERE employment_status = 'Active'
+WHERE employment_status = 'Working'
   AND date_joined IS NOT NULL
 GROUP BY EXTRACT(YEAR FROM date_joined), business_unit
 ORDER BY year_joined DESC
@@ -376,7 +384,7 @@ SELECT
   END as tenure_band,
   COUNT(*) as headcount
 FROM employees
-WHERE employment_status = 'Active'
+WHERE employment_status = 'Working'
   AND business_unit = 'B2B'
   AND date_joined IS NOT NULL
 GROUP BY tenure_band
@@ -384,7 +392,26 @@ ORDER BY headcount DESC
 LIMIT 10
 \`\`\`
 
-**"Top 10 RMs with their names (join employees)"** — JOINS ARE ${allowJoins ? 'ALLOWED' : 'NOT ALLOWED — run two separate queries: first get RM IDs from b2b table, then look up names from employees table'}
+**"Top 10 RMs with their names (join employees to get RM names)"** — JOINS ARE ${allowJoins ? 'ALLOWED — example:' : 'NOT ALLOWED for your access level'}
+${allowJoins ? `\`\`\`sql
+-- Join pattern: strip W prefix from "RM Emp ID" to match employees.employee_number
+WITH rm_totals AS (
+  SELECT "RM Emp ID",
+         SUM(NULLIF("Total Net Sales (COB 100%)", '')::numeric) as total_cr
+  FROM b2b_sales_current_month
+  GROUP BY "RM Emp ID"
+)
+SELECT
+  r."RM Emp ID",
+  e.full_name as rm_name,
+  e.job_title,
+  ROUND(r.total_cr::numeric, 2) as total_cr
+FROM rm_totals r
+JOIN employees e ON e.employee_number = SUBSTRING(r."RM Emp ID" FROM 2)
+WHERE e.employment_status = 'Working'
+ORDER BY total_cr DESC
+LIMIT 10
+\`\`\`` : `Run two separate queries: first get RM IDs from b2b table, then look up names from employees (stripping W prefix: SUBSTRING("RM Emp ID" FROM 2) = employee_number).`}
 `;
 }
 
