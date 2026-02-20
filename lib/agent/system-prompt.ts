@@ -260,12 +260,12 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 | "fd_inflow_mtd[cr.]" | text→cast | Cast: \`NULLIF("fd_inflow_mtd[cr.]", '')::numeric\` |
 
 #### employees — Employee Directory
-⚠️ **employee_number already includes the W-prefix for B2B staff** — e.g. \`"W1361"\`, \`"W1726D"\`. The B2B "RM Emp ID" column also stores the same value. Join directly: \`e.employee_number = b."RM Emp ID"\` — do NOT use SUBSTRING or strip the W.
+⚠️ **employee_number format is mixed** — most B2B RMs have a W-prefix (e.g. \`"W1361"\`, \`"W1726D"\`), but some B2B employees (managers/support) have bare numbers (e.g. \`"2690"\`). The "RM Emp ID" column in B2B sales tables always uses the W-prefix. Join directly: \`e.employee_number = b."RM Emp ID"\` — this correctly matches W-prefixed RMs. Bare-number employees simply don't appear in B2B sales tables (they are not field RMs).
 ⚠️ **employment_status actual value is \`'Working'\`** (not \`'Active'\`). Always use \`WHERE employment_status = 'Working'\` to filter active employees.
-⚠️ **business_unit actual values**: \`'B2B'\`, \`'B2C'\`, \`'Private Wealth'\` (NOT 'PW'), \`'Corporate'\`, \`'Support Functions'\`.
+⚠️ **business_unit actual values**: \`'B2B'\` (184), \`'B2C'\` (144), \`'Private Wealth'\` (606 — largest BU, NOT 'PW'), \`'Corporate'\` (30), \`'Support Functions'\` (203).
 | Column | Type | Notes |
 |---|---|---|
-| employee_number | text | W-prefixed for B2B (e.g. "W1361"). Join to B2B tables: e.employee_number = "RM Emp ID" |
+| employee_number | text | Mixed format: W-prefixed for RMs (e.g. "W1361", "W1726D"), bare numbers for some non-RM roles (e.g. "2690"). Join to B2B sales: e.employee_number = "RM Emp ID" |
 | full_name | text | Display name |
 | work_email | text | Email address |
 | gender | text | |
@@ -343,7 +343,7 @@ Day-wise sales data per advisor/RM — 83k+ rows covering all periods.
    - **Any date column:** always filter with \`IS NOT NULL\` before EXTRACT or date arithmetic
    - **Any numeric column:** use \`COALESCE(col, 0)\` to treat NULLs as zero in sums
    - **employees.employment_status actual value is 'Working'** — ALWAYS use \`WHERE employment_status = 'Working'\` NOT 'Active'
-   - **employees.employee_number ALREADY includes the W-prefix for B2B staff** (e.g. "W1361", "W1726D"). "RM Emp ID" in B2B tables also has the W-prefix. Join DIRECTLY: \`e.employee_number = b."RM Emp ID"\` — do NOT use SUBSTRING or strip the W
+   - **B2B join pattern**: "RM Emp ID" in sales tables is always W-prefixed (e.g. "W1780"). Most RM employee_numbers are also W-prefixed (e.g. "W1361") — some non-RM B2B staff have bare numbers ("2690") and won't appear in sales. Join DIRECTLY: \`e.employee_number = b."RM Emp ID"\` — do NOT use SUBSTRING. Verified: this join matches 2,917 rows.
    - **If a query returns 0 rows**, try removing WHERE filters one by one to find what's causing the empty result, then tell the user what you found (e.g. "date_joined is NULL for all employees")
 
 ### Example SQL Patterns — COPY THESE EXACTLY, they handle the text→numeric cast

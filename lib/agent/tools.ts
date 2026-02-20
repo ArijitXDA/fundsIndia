@@ -119,10 +119,12 @@ function parseYtdRow(row: any) {
 }
 
 // ── Helper: resolve RM full names from employees table ────────────────────────
-// Diagnostic confirmed: employees.employee_number already stores the W-prefix
-// for B2B staff (e.g. "W1361"), matching exactly the "RM Emp ID" in B2B tables.
-// Some IDs also have trailing letters (e.g. "W1726D") — stored as-is in both.
-// DO NOT strip the W prefix — query directly with the original emp_id.
+// Diagnostic (t13/t17) confirmed: "RM Emp ID" in B2B sales tables is always
+// W-prefixed (e.g. "W1780"). Most RM employee_numbers match exactly (e.g.
+// "W1361", "W1726D"). Some non-RM B2B staff have bare numbers ("2690") but
+// they don't appear in sales tables, so the direct join is correct.
+// Verified: direct join matches 2,917 rows. SUBSTRING gives 0.
+// DO NOT strip or add any prefix — query directly with the original emp_id.
 async function resolveRmNames(empIds: string[]): Promise<Map<string, { full_name: string; job_title: string }>> {
   if (empIds.length === 0) return new Map();
 
