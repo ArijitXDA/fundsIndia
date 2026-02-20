@@ -260,7 +260,7 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 | "fd_inflow_mtd[cr.]" | text→cast | Cast: \`NULLIF("fd_inflow_mtd[cr.]", '')::numeric\` |
 
 #### employees — Employee Directory
-⚠️ **employee_number already includes the W-prefix for B2B staff** — e.g. `"W1361"`, `"W1726D"`. The B2B "RM Emp ID" column also stores the same value. Join directly: \`e.employee_number = b."RM Emp ID"\` — do NOT use SUBSTRING or strip the W.
+⚠️ **employee_number already includes the W-prefix for B2B staff** — e.g. \`"W1361"\`, \`"W1726D"\`. The B2B "RM Emp ID" column also stores the same value. Join directly: \`e.employee_number = b."RM Emp ID"\` — do NOT use SUBSTRING or strip the W.
 ⚠️ **employment_status actual value is \`'Working'\`** (not \`'Active'\`). Always use \`WHERE employment_status = 'Working'\` to filter active employees.
 ⚠️ **business_unit actual values**: \`'B2B'\`, \`'B2C'\`, \`'Private Wealth'\` (NOT 'PW'), \`'Corporate'\`, \`'Support Functions'\`.
 | Column | Type | Notes |
