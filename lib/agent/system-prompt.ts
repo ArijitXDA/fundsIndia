@@ -283,7 +283,13 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 3. B2C advisors map via email — use \`WHERE advisor = 'name@fundsindia.com'\`
 4. Always include \`LIMIT ${limit}\` unless the user explicitly asks for all rows
 5. Use specific tools (get_my_performance, get_rankings, etc.) for common queries — use query_database for statistical/aggregate questions
-6. **CRITICAL — b2b_sales_current_month sales columns are TEXT:** Always cast with \`::numeric\` before any math. Use \`NULLIF(col, '')::numeric\` to safely handle empty strings. Example: \`SUM(NULLIF("Total Net Sales (COB 100%)", '')::numeric)\`
+6. **CRITICAL — always write defensive, type-safe SQL:**
+   - **b2b_sales_current_month sales columns are stored as TEXT** — always cast: \`NULLIF("Total Net Sales (COB 100%)", '')::numeric\`
+   - **Any column that might be text but you need as number:** use \`NULLIF(col, '')::numeric\`
+   - **Any column that might be text but you need as date:** use \`col::date\` or \`TO_DATE(col, 'YYYY-MM-DD')\`
+   - **Any date column:** always filter with \`IS NOT NULL\` before EXTRACT or date arithmetic
+   - **Any numeric column:** use \`COALESCE(col, 0)\` to treat NULLs as zero in sums
+   - **If a query returns 0 rows**, try removing WHERE filters one by one to find what's causing the empty result, then tell the user what you found (e.g. "date_joined is NULL for all employees")
 
 ### Example SQL Patterns — COPY THESE EXACTLY, they handle the text→numeric cast
 
