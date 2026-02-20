@@ -6,6 +6,7 @@ import {
   MessageSquare, RefreshCw, AlertCircle, Maximize2, Minimize2,
   Clock, Database, History, ArrowLeft,
 } from 'lucide-react';
+import AgentChart, { ChartSpec } from '@/components/AgentChart';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -606,23 +607,143 @@ function MessageBubble({ message }: { message: Message }) {
   const isProactive = message.isProactive;
   const isStreaming = message.isStreaming;
 
-  const renderContent = (content: string) => {
-    const lines = content.split('\n');
-    return lines.map((line, i) => {
-      if (!line.trim()) return <br key={i} />;
+  // ── Inline text renderer: bold, italic, inline-code ────────────────────────
+  const renderInline = (text: string, key: number) => {
+    const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g);
+    return (
+      <span key={key}>
+        {parts.map((p, j) => {
+          if (p.startsWith('**') && p.endsWith('**'))
+            return <strong key={j} className="font-semibold">{p.slice(2, -2)}</strong>;
+          if (p.startsWith('`') && p.endsWith('`'))
+            return <code key={j} className="bg-gray-100 text-indigo-700 rounded px-1 py-0.5 text-xs font-mono">{p.slice(1, -1)}</code>;
+          if (p.startsWith('*') && p.endsWith('*'))
+            return <em key={j}>{p.slice(1, -1)}</em>;
+          return <span key={j}>{p}</span>;
+        })}
+      </span>
+    );
+  };
 
-      const parts = line.split(/(\*\*[^*]+\*\*)/g);
-      return (
-        <span key={i} className="block">
-          {parts.map((part, j) => {
-            if (part.startsWith('**') && part.endsWith('**')) {
-              return <strong key={j}>{part.slice(2, -2)}</strong>;
-            }
-            return <span key={j}>{part}</span>;
-          })}
-        </span>
-      );
+  // ── Full content renderer: charts, code blocks, lists, text ─────────────────
+  const renderContent = (content: string) => {
+    const elements: React.ReactNode[] = [];
+    // Split content into fenced-block segments and plain text
+    const segments = content.split(/(```[\s\S]*?```)/g);
+
+    segments.forEach((seg, si) => {
+      // ── Fenced code block ──────────────────────────────────────────────────
+      if (seg.startsWith('```')) {
+        const inner = seg.replace(/^```(\w*)\n?/, '').replace(/\n?```$/, '');
+        const lang  = seg.match(/^```(\w+)/)?.[1] ?? '';
+
+        // Chart block — parse JSON and render recharts
+        if (lang === 'chart') {
+          try {
+            const spec: ChartSpec = JSON.parse(inner);
+            elements.push(<AgentChart key={si} spec={spec} />);
+          } catch {
+            // Invalid JSON — fall through to code display
+            elements.push(
+              <pre key={si} className="mt-2 p-2 bg-gray-100 rounded-lg text-xs font-mono overflow-x-auto whitespace-pre-wrap break-all text-red-600">
+                ⚠️ Invalid chart JSON: {inner}
+              </pre>
+            );
+          }
+          return;
+        }
+
+        // SQL / other code block
+        elements.push(
+          <pre key={si} className="mt-2 mb-1 p-2.5 bg-gray-900 text-gray-100 rounded-lg text-xs font-mono overflow-x-auto whitespace-pre leading-relaxed">
+            <code>{inner}</code>
+          </pre>
+        );
+        return;
+      }
+
+      // ── Plain text segment — process line by line ──────────────────────────
+      const lines = seg.split('\n');
+      let i = 0;
+      while (i < lines.length) {
+        const line = lines[i];
+        const trimmed = line.trim();
+
+        // Empty line
+        if (!trimmed) { elements.push(<br key={`${si}-${i}`} />); i++; continue; }
+
+        // Heading: ### or ## or #
+        const headingMatch = trimmed.match(/^(#{1,3})\s+(.+)/);
+        if (headingMatch) {
+          const level = headingMatch[1].length;
+          const text  = headingMatch[2];
+          const cls = level === 1
+            ? 'text-base font-bold text-gray-900 mt-2 mb-0.5'
+            : level === 2
+            ? 'text-sm font-bold text-gray-800 mt-1.5 mb-0.5'
+            : 'text-sm font-semibold text-gray-700 mt-1 mb-0.5';
+          elements.push(<p key={`${si}-${i}`} className={cls}>{renderInline(text, 0)}</p>);
+          i++; continue;
+        }
+
+        // Horizontal rule ---
+        if (/^[-*_]{3,}$/.test(trimmed)) {
+          elements.push(<hr key={`${si}-${i}`} className="my-2 border-gray-200" />);
+          i++; continue;
+        }
+
+        // Bullet list — collect consecutive bullet lines
+        if (/^[-*•]\s/.test(trimmed)) {
+          const items: string[] = [];
+          while (i < lines.length && /^[-*•]\s/.test(lines[i].trim())) {
+            items.push(lines[i].trim().replace(/^[-*•]\s+/, ''));
+            i++;
+          }
+          elements.push(
+            <ul key={`${si}-ul-${i}`} className="mt-0.5 mb-0.5 space-y-0.5 pl-3">
+              {items.map((item, k) => (
+                <li key={k} className="flex items-start gap-1.5 text-sm">
+                  <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
+                  <span>{renderInline(item, k)}</span>
+                </li>
+              ))}
+            </ul>
+          );
+          continue;
+        }
+
+        // Numbered list — collect consecutive numbered lines
+        if (/^\d+[.)]\s/.test(trimmed)) {
+          const items: string[] = [];
+          let num = 1;
+          while (i < lines.length && /^\d+[.)]\s/.test(lines[i].trim())) {
+            items.push(lines[i].trim().replace(/^\d+[.)]\s+/, ''));
+            i++;
+          }
+          elements.push(
+            <ol key={`${si}-ol-${i}`} className="mt-0.5 mb-0.5 space-y-0.5 pl-3">
+              {items.map((item, k) => (
+                <li key={k} className="flex items-start gap-1.5 text-sm">
+                  <span className="mt-0 shrink-0 font-semibold text-indigo-500 text-xs min-w-[14px]">{num++ }.</span>
+                  <span>{renderInline(item, k)}</span>
+                </li>
+              ))}
+            </ol>
+          );
+          continue;
+        }
+
+        // Regular paragraph line
+        elements.push(
+          <span key={`${si}-${i}`} className="block text-sm leading-relaxed">
+            {renderInline(trimmed, 0)}
+          </span>
+        );
+        i++;
+      }
     });
+
+    return elements;
   };
 
   if (isUser) {

@@ -577,7 +577,42 @@ Additional behavioural guidelines:
 - Never fabricate numbers. If a tool returns null or empty, say the data is not available.
 - If query_database returns an error, ALWAYS show the exact error message verbatim (e.g. "Query failed: syntax error at or near..."). Never paraphrase it as "technical problem" or "restriction". The raw error is essential for debugging.
 - When comparing periods, highlight the delta and direction (↑ / ↓).
-- Keep responses focused and relevant to the user's role. A B2C Advisor doesn't need B2B team stats.`;
+- Keep responses focused and relevant to the user's role. A B2C Advisor doesn't need B2B team stats.
+
+## Chart / Visualisation Output
+When presenting **tabular or numerical data with 3+ rows**, you MUST render a chart alongside (or instead of) a plain text table. Use this exact fenced block format:
+
+\`\`\`chart
+{"type":"bar","title":"Top 5 RMs by MTD Sales","xKey":"name","yKey":"total_cr","data":[{"name":"Raj","total_cr":12.3},{"name":"Priya","total_cr":10.1}]}
+\`\`\`
+
+**Chart types:**
+- \`bar\` — rankings, comparisons, categories (most common)
+- \`line\` — trends over time (month-by-month)
+- \`area\` — trends with volume emphasis (AUM growth)
+- \`pie\` — composition / share (B2B vs B2C split)
+
+**Chart spec fields:**
+- \`type\`: "bar" | "line" | "area" | "pie"
+- \`title\`: short descriptive title (required)
+- \`xKey\`: the field name for the X axis / pie labels (must match a key in data objects)
+- \`yKey\`: the field name(s) for Y axis / pie value — can be a string OR array of strings for multi-series
+- \`data\`: array of objects — max 20 items for readability
+- \`stacked\`: true for stacked bar/area charts (optional)
+
+**Rules:**
+- The JSON must be on a SINGLE LINE inside the \`\`\`chart block — no newlines inside the JSON
+- Field names in data must be short (no spaces) — use snake_case like "total_cr", "rm_name", "month"
+- Truncate long names to 12 chars to avoid axis overlap (e.g. "Kanmani M." not "Kanmani Muthupandi")
+- Always follow the chart with a 2-3 sentence text summary of the key insight
+- For trend data: use \`line\` or \`area\` chart with \`xKey\` as the time period
+- For multi-series (e.g. B2B vs B2C), use \`"yKey": ["b2b_cr", "b2c_cr"]\` array syntax
+
+**When to use each type:**
+- "Top N / bottom N / rankings" → \`bar\`
+- "How has X changed over months" → \`line\` or \`area\`
+- "What % share / breakdown" → \`pie\`
+- "Compare two metrics side by side" → \`bar\` with yKey array`;
 }
 
 // ── Layer 5: Memory ───────────────────────────────────────────────────────────
@@ -622,5 +657,7 @@ Always use the available tools to fetch live data. Never guess or approximate nu
 
 **NEVER say "I cannot access that data" or "I don't have access to individual figures" when query_database is available.** Use it. Write the SQL. Return the answer.
 
-For multi-part questions, call multiple tools in sequence as needed.`;
+For multi-part questions, call multiple tools in sequence as needed.
+
+**Chart output rule:** After fetching any data with 3+ rows of numerical results, ALWAYS render a \`\`\`chart block alongside your text summary. Pick the most appropriate chart type (bar for rankings, line/area for trends, pie for shares).`;
 }
