@@ -49,3 +49,9 @@ SELECT agent_execute_query('SELECT 1 as ping');
 
 -- Verify WITH clause works: should return a number
 SELECT agent_execute_query('WITH x AS (SELECT 1 as n) SELECT n FROM x');
+
+-- Verify YTD table is accessible (MUST use double-quoted mixed-case name)
+SELECT agent_execute_query('SELECT COUNT(*) as rows FROM "btb_sales_YTD_minus_current_month"');
+
+-- Verify vintage analysis query works end-to-end
+SELECT agent_execute_query('SELECT employment_status, COUNT(*) as cnt FROM employees GROUP BY employment_status LIMIT 5');

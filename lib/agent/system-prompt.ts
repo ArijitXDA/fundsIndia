@@ -225,6 +225,7 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 
 #### btb_sales_YTD_minus_current_month — B2B YTD Sales (excl. current month)
 ⚠️ Same multi-row structure as above — one row per IFA partner per RM. Always GROUP BY "RM Emp ID" and SUM for RM-level YTD totals.
+⚠️ **CASE-SENSITIVE table name** — always write it EXACTLY as: \`"btb_sales_YTD_minus_current_month"\` (with double-quotes) in SQL. Never lowercase it. The capital YTD will cause "table does not exist" if unquoted.
 | Column | Type | Notes |
 |---|---|---|
 | "RM Emp ID" | text | W-prefixed employee ID — the Relationship Manager |
@@ -284,7 +285,7 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 | period_end | date | Period end date |
 
 ### SQL Writing Rules
-1. Always double-quote column names containing spaces, brackets, +, or % (e.g. \`"RM Emp ID"\`, \`"MF+SIF+MSCI"\`)
+1. Always double-quote column names containing spaces, brackets, +, or % (e.g. \`"RM Emp ID"\`, \`"MF+SIF+MSCI"\`). Also double-quote the YTD table name since it has uppercase letters: \`"btb_sales_YTD_minus_current_month"\`
 2. B2B employee IDs are W-prefixed — use \`WHERE "RM Emp ID" = 'W1234'\`
 3. B2C advisors map via email — use \`WHERE advisor = 'name@fundsindia.com'\`
 4. Always include \`LIMIT ${limit}\` unless the user explicitly asks for all rows
@@ -358,6 +359,54 @@ SELECT
   ROUND(AVG("net_inflow_mtd[cr]")::numeric, 2) as avg_cr
 FROM b2c
 LIMIT 1
+\`\`\`
+
+**"Top 10 RMs by YTD sales"** — NOTE: always double-quote the YTD table name
+\`\`\`sql
+WITH ytd_totals AS (
+  SELECT "RM Emp ID",
+         SUM("Total Net Sales (COB 100%)") as ytd_cr
+  FROM "btb_sales_YTD_minus_current_month"
+  GROUP BY "RM Emp ID"
+)
+SELECT "RM Emp ID", ROUND(ytd_cr::numeric, 2) as ytd_cr
+FROM ytd_totals
+ORDER BY ytd_cr DESC
+LIMIT 10
+\`\`\`
+
+**"Vintage bucket vs average MTD performance (B2B)"** — join employees vintage to sales
+\`\`\`sql
+WITH emp_vintage AS (
+  SELECT
+    employee_number,
+    CASE
+      WHEN date_joined >= CURRENT_DATE - INTERVAL '1 year' THEN '0-1 yr'
+      WHEN date_joined >= CURRENT_DATE - INTERVAL '3 years' THEN '1-3 yrs'
+      WHEN date_joined >= CURRENT_DATE - INTERVAL '5 years' THEN '3-5 yrs'
+      ELSE '5+ yrs'
+    END as vintage_band
+  FROM employees
+  WHERE employment_status = 'Working'
+    AND business_unit = 'B2B'
+    AND date_joined IS NOT NULL
+),
+rm_mtd AS (
+  SELECT "RM Emp ID",
+         SUM(NULLIF("Total Net Sales (COB 100%)", '')::numeric) as mtd_cr
+  FROM b2b_sales_current_month
+  GROUP BY "RM Emp ID"
+)
+SELECT
+  v.vintage_band,
+  COUNT(DISTINCT r."RM Emp ID") as rm_count,
+  ROUND(AVG(r.mtd_cr)::numeric, 2) as avg_mtd_cr,
+  ROUND(SUM(r.mtd_cr)::numeric, 2) as total_mtd_cr
+FROM rm_mtd r
+JOIN emp_vintage v ON v.employee_number = SUBSTRING(r."RM Emp ID" FROM 2)
+GROUP BY v.vintage_band
+ORDER BY avg_mtd_cr DESC
+LIMIT 10
 \`\`\`
 
 **"Vintage / tenure analysis — how many employees joined in each year?"**
