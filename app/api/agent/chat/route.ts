@@ -312,7 +312,7 @@ export async function POST(request: NextRequest) {
 
       // Persist to DB
       await persistMessages({
-        convId, message, isProactive, finalContent: finalText,
+        convId, employeeId: employee.id, message, isProactive, finalContent: finalText,
         dataSources, totalTokensUsed, model, existingMessages,
       });
 
@@ -385,7 +385,7 @@ export async function POST(request: NextRequest) {
       ?? 'I was unable to complete your request. Please try again.';
 
     await persistMessages({
-      convId, message, isProactive, finalContent,
+      convId, employeeId: employee.id, message, isProactive, finalContent,
       dataSources, totalTokensUsed, model, existingMessages,
     });
 
@@ -481,7 +481,7 @@ export async function POST(request: NextRequest) {
 
       // Persist to DB after streaming completes
       await persistMessages({
-        convId, message, isProactive, finalContent: fullContent,
+        convId, employeeId: employee.id, message, isProactive, finalContent: fullContent,
         dataSources, totalTokensUsed, model, existingMessages,
       }).catch(console.error);
 
@@ -507,10 +507,11 @@ export async function POST(request: NextRequest) {
 // ── Persist helper ────────────────────────────────────────────────────────────
 
 async function persistMessages({
-  convId, message, isProactive, finalContent,
+  convId, employeeId, message, isProactive, finalContent,
   dataSources, totalTokensUsed, model, existingMessages,
 }: {
   convId: string | null;
+  employeeId: string;
   message: string | undefined;
   isProactive: boolean | undefined;
   finalContent: string;
@@ -526,6 +527,7 @@ async function persistMessages({
   if (message) {
     messagesToInsert.push({
       conversation_id: convId,
+      employee_id: employeeId,
       role: 'user',
       content: message,
     });
@@ -533,6 +535,7 @@ async function persistMessages({
 
   messagesToInsert.push({
     conversation_id: convId,
+    employee_id: employeeId,
     role: 'assistant',
     content: finalContent,
     data_sources_used: dataSources,
