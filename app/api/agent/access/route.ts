@@ -42,7 +42,10 @@ export async function GET(request: NextRequest) {
     `)
     .order('granted_at', { ascending: false });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error('[agent/access GET] Supabase error:', error);
+    return NextResponse.json({ error: error.message, details: error.details, hint: error.hint }, { status: 500 });
+  }
   return NextResponse.json({ access: data });
 }
 
@@ -104,7 +107,10 @@ export async function POST(request: NextRequest) {
     `)
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error('[agent/access POST] Supabase error:', error);
+    return NextResponse.json({ error: error.message, details: error.details, hint: error.hint }, { status: 500 });
+  }
   return NextResponse.json({ access: data }, { status: 201 });
 }
 
@@ -128,7 +134,10 @@ export async function PUT(request: NextRequest) {
     `)
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error('[agent/access PUT] Supabase error:', error);
+    return NextResponse.json({ error: error.message, details: error.details, hint: error.hint }, { status: 500 });
+  }
   return NextResponse.json({ access: data });
 }
 
