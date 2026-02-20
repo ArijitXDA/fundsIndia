@@ -212,7 +212,7 @@ export async function GET() {
         distinct_segments_all_rows: segmentCounts,
         sample_per_segment: sampleBySegment,
         // Also show raw rows 45-55 in case PW is at the end
-        raw_rows_45_to_55: rows.slice(44, 55).map(r =>
+        raw_rows_45_to_55: rows.slice(44, 55).map((r: string[]) =>
           headers.reduce((acc: Record<string,string>, h, i) => { acc[h] = r[i] ?? ''; return acc; }, {})
         ),
       };
