@@ -39,7 +39,7 @@ function isAuthorized(request: NextRequest): boolean {
 // ── Normalize business_segment values to match employees.business_unit ────────
 // The Google Sheet stores abbreviated/variant values (e.g. "PW", "B2B ", "b2c").
 // Normalize them so gs tables always match employees table values exactly.
-function normalizeSegment(raw: string): string {
+function normalizeSegment(raw: string | null): string {
   const s = (raw ?? '').trim();
   const upper = s.toUpperCase();
   if (upper === 'PW' || upper === 'PRIVATE WEALTH' || upper === 'PRIVATEWEALTH') return 'Private Wealth';
