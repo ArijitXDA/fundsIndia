@@ -90,7 +90,9 @@ const B2B_YTD_COLS = `"RM Emp ID", "Partner Name", "MF+SIF+MSCI", "SUM of COB (1
 function parseMtdRow(row: any) {
   return {
     emp_id:   String(row['RM Emp ID'] || '').trim(),
-    name:     String(row['Partner Name'] || '').trim(),
+    // NOTE: "Partner Name" is the IFA/ARN partner, NOT the RM's own name.
+    // RM names are resolved separately from the employees table via resolveRmNames().
+    partner_name: String(row['Partner Name'] || '').trim(),
     zone:     String(row['Zone'] || '').trim(),
     branch:   String(row['Branch'] || '').trim(),
     mf_sif_msci:       parseFloat(row['MF+SIF+MSCI'] || 0) || 0,
@@ -104,7 +106,8 @@ function parseMtdRow(row: any) {
 function parseYtdRow(row: any) {
   return {
     emp_id:   String(row['RM Emp ID'] || '').trim(),
-    name:     String(row['Partner Name'] || '').trim(),
+    // NOTE: "Partner Name" is the IFA/ARN partner, NOT the RM's own name.
+    partner_name: String(row['Partner Name'] || '').trim(),
     zone:     String(row['Zone'] || '').trim(),
     branch:   String(row['Branch'] || '').trim(),
     mf_sif_msci:   parseFloat(row['MF+SIF+MSCI'] || 0) || 0,
@@ -113,6 +116,24 @@ function parseYtdRow(row: any) {
     alternate:     parseFloat(row['SUM of ALT'] || row['ALTERNATE'] || 0) || 0,
     total:         parseFloat(row['Total Net Sales (COB 100%)'] || 0) || 0,
   };
+}
+
+// ── Helper: resolve RM full names from employees table ────────────────────────
+// B2B sales tables only have "RM Emp ID" (W-prefixed) and "Partner Name" (IFA).
+// This batch-fetches the actual RM full_name + job_title from the employees table.
+// Returns a map of employee_number → { full_name, job_title }.
+async function resolveRmNames(empIds: string[]): Promise<Map<string, { full_name: string; job_title: string }>> {
+  if (empIds.length === 0) return new Map();
+  const { data } = await supabaseAdmin
+    .from('employees')
+    .select('employee_number, full_name, job_title')
+    .in('employee_number', empIds)
+    .limit(empIds.length + 10);
+  const map = new Map<string, { full_name: string; job_title: string }>();
+  for (const e of (data ?? [])) {
+    map.set(String(e.employee_number), { full_name: e.full_name, job_title: e.job_title });
+  }
+  return map;
 }
 
 // B2C column name helper
@@ -575,13 +596,20 @@ async function toolGetTeamPerformance(args: any, ctx: ToolContext) {
       }
     }
 
-    const members = Array.from(byEmp.values())
+    const sorted = Array.from(byEmp.values())
       .sort((a, b) => sortBy === 'ytd_asc' ? a.total - b.total : b.total - a.total)
-      .slice(0, limit)
-      .map((r, i) => ({
+      .slice(0, limit);
+
+    // Resolve RM names from employees table
+    const nameMap = await resolveRmNames(sorted.map(r => r.emp_id));
+
+    const members = sorted.map((r, i) => {
+      const emp = nameMap.get(r.emp_id);
+      return {
         rank: i + 1,
         employee_number: r.emp_id,
-        name: r.name,
+        rm_name: emp?.full_name ?? r.emp_id,
+        job_title: emp?.job_title ?? '',
         zone: r.zone,
         branch: r.branch,
         ytd_total_cr: r.total,
@@ -589,7 +617,8 @@ async function toolGetTeamPerformance(args: any, ctx: ToolContext) {
         cob100_cr: r.cob100,
         aif_pms_las_cr: r.aif_pms_las,
         alternate_cr: r.alternate,
-      }));
+      };
+    });
 
     return {
       period: 'YTD',
@@ -620,13 +649,20 @@ async function toolGetTeamPerformance(args: any, ctx: ToolContext) {
     }
   }
 
-  const members = Array.from(byEmp.values())
-    .sort((a, b) => sortBy === 'mtd_asc' ? a.total - b.total : sortBy === 'name' ? a.name.localeCompare(b.name) : b.total - a.total)
-    .slice(0, limit)
-    .map((r, i) => ({
+  const sorted = Array.from(byEmp.values())
+    .sort((a, b) => sortBy === 'mtd_asc' ? a.total - b.total : b.total - a.total)
+    .slice(0, limit);
+
+  // Resolve RM names from employees table
+  const nameMap = await resolveRmNames(sorted.map(r => r.emp_id));
+
+  const members = sorted.map((r, i) => {
+    const emp = nameMap.get(r.emp_id);
+    return {
       rank: i + 1,
       employee_number: r.emp_id,
-      name: r.name,
+      rm_name: emp?.full_name ?? r.emp_id,
+      job_title: emp?.job_title ?? '',
       zone: r.zone,
       branch: r.branch,
       mtd_total_cr: r.total,
@@ -634,7 +670,8 @@ async function toolGetTeamPerformance(args: any, ctx: ToolContext) {
       cob100_cr: r.cob100,
       aif_pms_las_cr: r.aif_pms_las,
       alternate_cr: r.alternate,
-    }));
+    };
+  });
 
   return {
     period: 'MTD',
@@ -705,18 +742,26 @@ async function toolGetRankings(args: any, ctx: ToolContext) {
     .sort((a, b) => b.total - a.total)
     .slice(0, limit);
 
+  // Resolve actual RM names from employees table (Partner Name ≠ RM name)
+  const empIds = ranked.map(r => r.emp_id);
+  const nameMap = await resolveRmNames(empIds);
+
   return {
     vertical: 'B2B',
     sort_by: sortBy,
     total_employees_in_pool: byEmp.size,
-    rankings: ranked.map((r, i) => ({
-      rank: i + 1,
-      employee_number: r.emp_id,
-      name: r.name,
-      zone: r.zone,
-      branch: r.branch,
-      total_cr: r.total,
-    })),
+    rankings: ranked.map((r, i) => {
+      const emp = nameMap.get(r.emp_id);
+      return {
+        rank: i + 1,
+        employee_number: r.emp_id,
+        rm_name: emp?.full_name ?? r.emp_id,   // RM's actual name from employees table
+        job_title: emp?.job_title ?? '',
+        zone: r.zone,
+        branch: r.branch,
+        total_cr: r.total,
+      };
+    }),
   };
 }
 
@@ -1082,11 +1127,13 @@ async function toolGetCompanySummary(args: any, ctx: ToolContext) {
   const b2bAifMtd       = b2bMtdEmployees.reduce((s, r) => s + r.aif_pms_las, 0);
   const b2bAltMtd       = b2bMtdEmployees.reduce((s, r) => s + r.alternate, 0);
 
-  // B2B top performers
-  const b2bTopMtd = [...b2bMtdEmployees]
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 3)
-    .map((r, i) => ({ rank: i + 1, employee_number: r.emp_id, name: r.name, zone: r.zone, mtd_total_cr: r.total }));
+  // B2B top performers — resolve RM names from employees table
+  const b2bTopMtdSorted = [...b2bMtdEmployees].sort((a, b) => b.total - a.total).slice(0, 3);
+  const b2bTopNameMap = await resolveRmNames(b2bTopMtdSorted.map(r => r.emp_id));
+  const b2bTopMtd = b2bTopMtdSorted.map((r, i) => {
+    const emp = b2bTopNameMap.get(r.emp_id);
+    return { rank: i + 1, employee_number: r.emp_id, rm_name: emp?.full_name ?? r.emp_id, zone: r.zone, mtd_total_cr: r.total };
+  });
 
   // ── B2C aggregation ──────────────────────────────────────────────────────
   const b2cParsed        = (b2cRows ?? []).map(parseB2cRow);

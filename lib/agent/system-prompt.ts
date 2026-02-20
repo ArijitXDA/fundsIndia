@@ -209,10 +209,11 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 ### Database Schema Reference
 
 #### b2b_sales_current_month — B2B MTD Sales (current month)
+⚠️ **IMPORTANT:** This table has ONE ROW PER PARTNER (IFA/ARN) per RM. An RM can have 10–50+ rows. Always GROUP BY "RM Emp ID" and SUM sales columns to get RM-level totals. "Partner Name" is the IFA/ARN partner name — it is NOT the RM's own name.
 | Column | Type | Notes |
 |---|---|---|
-| "RM Emp ID" | text | W-prefixed employee ID (e.g. W1234) |
-| "Partner Name" | text | ARN/partner name |
+| "RM Emp ID" | text | W-prefixed employee ID (e.g. W1234) — the Relationship Manager |
+| "Partner Name" | text | IFA/ARN partner name — NOT the RM's name |
 | "MF+SIF+MSCI" | numeric | MF + SIF + MSCI sales in Cr |
 | "COB (100%)" | numeric | COB at 100% in Cr |
 | "AIF+PMS+LAS+DYNAMO (TRAIL)" | numeric | Alternate trail in Cr |
@@ -222,10 +223,11 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 | "Zone" | text | Zone name |
 
 #### btb_sales_YTD_minus_current_month — B2B YTD Sales (excl. current month)
+⚠️ Same multi-row structure as above — one row per IFA partner per RM. Always GROUP BY "RM Emp ID" and SUM for RM-level YTD totals.
 | Column | Type | Notes |
 |---|---|---|
-| "RM Emp ID" | text | W-prefixed employee ID |
-| "Partner Name" | text | ARN/partner name |
+| "RM Emp ID" | text | W-prefixed employee ID — the Relationship Manager |
+| "Partner Name" | text | IFA/ARN partner name — NOT the RM's name |
 | "MF+SIF+MSCI" | numeric | YTD MF+SIF+MSCI in Cr |
 | "SUM of COB (100%)" | numeric | YTD COB at 100% in Cr |
 | "SUM of AIF+PMS+LAS (TRAIL)" | numeric | YTD alternate trail in Cr |
@@ -275,7 +277,45 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 2. B2B employee IDs are W-prefixed — use \`WHERE "RM Emp ID" = 'W1234'\`
 3. B2C advisors map via email — use \`WHERE advisor = 'name@fundsindia.com'\`
 4. Always include \`LIMIT ${limit}\` unless the user explicitly asks for all rows
-5. Prefer specific tools (get_my_performance, get_team_performance, etc.) for common queries — use query_database only for custom/ad-hoc needs`;
+5. Use specific tools (get_my_performance, get_rankings, etc.) for common queries — use query_database for statistical/aggregate questions
+
+### Example SQL Patterns (use these as templates)
+
+**"How many RMs are below average MTD sales?"**
+\`\`\`sql
+SELECT COUNT(DISTINCT "RM Emp ID") as below_average_count
+FROM b2b_sales_current_month
+WHERE "Total Net Sales (COB 100%)" < (
+  SELECT AVG("Total Net Sales (COB 100%)") FROM b2b_sales_current_month
+) LIMIT 1
+\`\`\`
+Note: b2b_sales_current_month has one row PER PARTNER per RM. To get RM-level totals first use a subquery:
+\`\`\`sql
+WITH rm_totals AS (
+  SELECT "RM Emp ID", SUM("Total Net Sales (COB 100%)") as total
+  FROM b2b_sales_current_month GROUP BY "RM Emp ID"
+)
+SELECT COUNT(*) as below_avg FROM rm_totals
+WHERE total < (SELECT AVG(total) FROM rm_totals) LIMIT 1
+\`\`\`
+
+**"How many RMs are below median?"**
+\`\`\`sql
+WITH rm_totals AS (
+  SELECT "RM Emp ID", SUM("Total Net Sales (COB 100%)") as total
+  FROM b2b_sales_current_month GROUP BY "RM Emp ID"
+),
+med AS (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY total) as median FROM rm_totals)
+SELECT COUNT(*) as below_median FROM rm_totals, med WHERE total < median LIMIT 1
+\`\`\`
+
+**"How many B2C advisors are below average?"**
+\`\`\`sql
+SELECT COUNT(*) as below_avg FROM b2c
+WHERE "net_inflow_mtd[cr]" < (SELECT AVG("net_inflow_mtd[cr]") FROM b2c) LIMIT 1
+\`\`\`
+
+**"Top 10 RMs with their names (join employees)"** — JOINS ARE ${allowJoins ? 'ALLOWED' : 'NOT ALLOWED for you — get RM IDs from b2b table, names from employees separately'}`;
 }
 
 // ── Layer 4: Persona Behaviour ────────────────────────────────────────────────
@@ -317,6 +357,24 @@ Use this context to personalise your responses where relevant. Don't repeat it b
 // ── Closing ───────────────────────────────────────────────────────────────────
 
 function buildClosingBlock(): string {
-  return `## Tool Usage
-Always use the available tools to fetch live data before answering quantitative questions. Do not guess or approximate numbers from memory. For multi-part questions, call multiple tools in sequence as needed.`;
+  return `## Tool Usage Rules (MANDATORY)
+Always use the available tools to fetch live data. Never guess or approximate numbers from memory.
+
+**Specific tool selection rules:**
+- Use **get_my_performance** for the current user's own numbers
+- Use **get_team_performance** for the user's direct/downstream team breakdown
+- Use **get_rankings** for leaderboards (top N, bottom N, by zone)
+- Use **get_company_summary** for company-wide totals and cross-vertical views
+- Use **query_database** for ANY of these patterns — you MUST use it instead of saying "I can't access that data":
+  - "How many RMs/advisors are below average?" → SQL: SELECT COUNT(*) WHERE total < (SELECT AVG(total) FROM ...)
+  - "How many are below median / above median?" → SQL: Use percentile_cont(0.5) or NTILE
+  - "What is the average / median / standard deviation of sales?"
+  - "How many employees in [zone/branch/vertical] hit target?"
+  - "Rank by [specific column] with custom filters"
+  - Any statistical, aggregate, or count-based question that get_rankings doesn't directly answer
+  - Any custom filter combination (zone + vertical + threshold)
+
+**NEVER say "I cannot access that data" or "I don't have access to individual figures" when query_database is available.** Use it. Write the SQL. Return the answer.
+
+For multi-part questions, call multiple tools in sequence as needed.`;
 }
