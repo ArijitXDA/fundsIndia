@@ -78,5 +78,17 @@ export async function GET(_request: NextRequest) {
   // 20. Distinct business_unit values in employees
   results.t20_business_units = await rpc(`SELECT DISTINCT business_unit, COUNT(*) as cnt FROM employees WHERE employment_status = 'Working' GROUP BY business_unit`);
 
+  // 21. gs_overall_aum — what business_segment values are actually stored?
+  results.t21_gs_aum_segments = await rpc(`SELECT DISTINCT business_segment, COUNT(*) as cnt FROM gs_overall_aum GROUP BY business_segment ORDER BY cnt DESC`);
+
+  // 22. gs_overall_aum — sample rows to see month format and actual values
+  results.t22_gs_aum_sample = await rpc(`SELECT month, business_segment, overall_aum, net_cr, mf_aum_cr FROM gs_overall_aum ORDER BY month DESC LIMIT 6`);
+
+  // 23. gs_overall_sales — what business_segment values are stored?
+  results.t23_gs_sales_segments = await rpc(`SELECT DISTINCT business_segment, COUNT(*) as cnt FROM gs_overall_sales GROUP BY business_segment ORDER BY cnt DESC`);
+
+  // 24. gs_overall_aum — check if the gs tables have any rows at all
+  results.t24_gs_row_counts = await rpc(`SELECT (SELECT COUNT(*) FROM gs_overall_aum) as aum_rows, (SELECT COUNT(*) FROM gs_overall_sales) as sales_rows`);
+
   return NextResponse.json(results, { status: 200 });
 }

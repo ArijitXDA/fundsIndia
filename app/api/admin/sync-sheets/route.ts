@@ -36,6 +36,20 @@ function isAuthorized(request: NextRequest): boolean {
   }
 }
 
+// ── Normalize business_segment values to match employees.business_unit ────────
+// The Google Sheet stores abbreviated/variant values (e.g. "PW", "B2B ", "b2c").
+// Normalize them so gs tables always match employees table values exactly.
+function normalizeSegment(raw: string): string {
+  const s = (raw ?? '').trim();
+  const upper = s.toUpperCase();
+  if (upper === 'PW' || upper === 'PRIVATE WEALTH' || upper === 'PRIVATEWEALTH') return 'Private Wealth';
+  if (upper === 'B2B') return 'B2B';
+  if (upper === 'B2C') return 'B2C';
+  if (upper === 'CORPORATE') return 'Corporate';
+  if (upper === 'SUPPORT FUNCTIONS' || upper === 'SUPPORT') return 'Support Functions';
+  return s; // return as-is if unrecognised (don't silently drop data)
+}
+
 // ── Sync overall_aum ──────────────────────────────────────────────────────────
 
 async function syncOverallAum(token: string): Promise<{ synced: number; total: number; errors: string[] }> {
@@ -47,7 +61,7 @@ async function syncOverallAum(token: string): Promise<{ synced: number; total: n
     .filter(r => r['Month'] && r['businesssegment']) // skip empty rows
     .map(r => ({
       month:                  toText(r['Month']),
-      business_segment:       toText(r['businesssegment']),
+      business_segment:       normalizeSegment(toText(r['businesssegment'])),
       mf_aum:                 toNum(r['MF_AUM']),
       mf_aum_cr:              toNum(r['MF_AUM_Cr']),
       eq_aum:                 toNum(r['EQ_AUM']),
@@ -106,7 +120,7 @@ async function syncOverallSales(token: string): Promise<{ synced: number; total:
       name:                     toText(r['name']),
       team_region:              toText(r['team_region']),
       zone:                     toText(r['zone']),
-      business_segment:         toText(r['businesssegment']),
+      business_segment:         normalizeSegment(toText(r['businesssegment'])),
       daywise:                  toText(r['daywise']),
       users_count:              toInt(r['users_count']),
       reg_users_count:          toInt(r['reg_users_count']),

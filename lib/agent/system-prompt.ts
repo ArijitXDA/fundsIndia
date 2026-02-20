@@ -281,7 +281,7 @@ ${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColL
 | employment_status | text | **'Working'** for active employees (NOT 'Active'). Filter: WHERE employment_status = 'Working' |
 
 #### gs_overall_aum — Monthly AUM by Business Segment (synced from Google Sheets)
-Aggregated monthly AUM figures across B2B, B2C, and PW segments.
+Aggregated monthly AUM figures across B2B, B2C, and Private Wealth segments.
 | Column | Type | Notes |
 |---|---|---|
 | month | text | Period e.g. "2024-04" — filter with LIKE '2024%' for a year |
@@ -305,7 +305,7 @@ Day-wise sales data per advisor/RM — 83k+ rows covering all periods.
 | name | text | Advisor/RM full name |
 | team_region | text | Team tier e.g. "GOLD", "SILVER" |
 | zone | text | Zone name |
-| business_segment | text | "B2B" or "B2C" |
+| business_segment | text | "B2B", "B2C", or "Private Wealth" (normalized from sheet — do NOT use "PW") |
 | daywise | text | Period e.g. "2024-04" — group by this for monthly trends |
 | users_count | integer | Total users |
 | reg_users_count | integer | Registered users |
