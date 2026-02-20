@@ -8,7 +8,7 @@
 CREATE TABLE IF NOT EXISTS gs_overall_aum (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   month            text NOT NULL,              -- e.g. "2024-04"
-  business_segment text NOT NULL,              -- "B2B" | "B2C" | "PW"
+  business_segment text NOT NULL,              -- "B2B" | "B2C" | "Private Wealth"
   mf_aum           numeric,                   -- Raw MF AUM value
   mf_aum_cr        numeric,                   -- MF AUM in Crores
   eq_aum           numeric,                   -- Equity AUM
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS gs_overall_sales (
   name                     text,              -- Advisor/RM name
   team_region              text,              -- e.g. "GOLD", "SILVER"
   zone                     text,
-  business_segment         text,              -- "B2B" | "B2C" | "PW"
+  business_segment         text,              -- "B2B" | "B2C" | "Private Wealth"
   daywise                  text,              -- Period e.g. "2024-04"
   users_count              integer,
   reg_users_count          integer,
