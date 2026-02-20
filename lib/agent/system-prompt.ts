@@ -186,10 +186,15 @@ function buildQueryDatabaseBlock(config: SystemPromptConfig): string {
   const allowJoins      = cfg.allow_joins      ?? false;
   const blocked         = cfg.blocked_columns  ?? {};
 
-  // Derive allowed tables for query_database (exclude agent/* tables)
-  const allowedTables = (config.dataAccess.allowedTables ?? []).filter(
+  // Derive allowed tables for query_database (exclude agent/* tables).
+  // Always include the Google Sheets sync tables — they are read-only data tables
+  // available to all users who have query_database enabled.
+  const GS_TABLES = ['gs_overall_aum', 'gs_overall_sales'];
+  const baseAllowed = (config.dataAccess.allowedTables ?? []).filter(
     t => !t.startsWith('agent_') && t !== 'users'
   );
+  // Merge gs tables in — deduplicate in case they were already explicitly listed
+  const allowedTables = Array.from(new Set([...baseAllowed, ...GS_TABLES]));
 
   const blockedColLines = Object.entries(blocked)
     .filter(([, cols]) => cols.length > 0)
@@ -481,7 +486,56 @@ ORDER BY headcount DESC
 LIMIT 10
 \`\`\`
 
-**"Top 10 RMs with their names (join employees to get RM names)"** — JOINS ARE ${allowJoins ? 'ALLOWED — example:' : 'NOT ALLOWED for your access level'}
+**"How has overall AUM trended month by month?"**
+\`\`\`sql
+SELECT month, business_segment,
+  ROUND(overall_aum::numeric, 2) as overall_aum_cr,
+  ROUND(net_cr::numeric, 2) as net_inflow_cr,
+  ROUND(sipinflow_cr::numeric, 2) as sip_cr
+FROM gs_overall_aum
+ORDER BY month ASC, business_segment
+LIMIT 100
+\`\`\`
+
+**"Compare B2B vs B2C AUM and net inflow over the last 12 months"**
+\`\`\`sql
+SELECT month, business_segment,
+  ROUND(overall_aum::numeric, 2) as aum_cr,
+  ROUND(net_cr::numeric, 2) as net_cr,
+  ROUND(monthly_net_sales::numeric, 2) as net_sales_cr
+FROM gs_overall_aum
+WHERE month >= TO_CHAR(CURRENT_DATE - INTERVAL '12 months', 'YYYY-MM')
+ORDER BY month ASC, business_segment
+LIMIT 100
+\`\`\`
+
+**"Top 10 advisors by SIP inflow across all months"**
+\`\`\`sql
+SELECT name, arn_rm, business_segment,
+  ROUND(SUM(sipinflow_amount)::numeric / 10000000, 2) as total_sip_cr,
+  COUNT(DISTINCT daywise) as months_active
+FROM gs_overall_sales
+WHERE name IS NOT NULL
+GROUP BY name, arn_rm, business_segment
+ORDER BY total_sip_cr DESC
+LIMIT 10
+\`\`\`
+
+**"Month-by-month SIP and lumpsum trend for B2C"**
+\`\`\`sql
+SELECT daywise as month,
+  ROUND(SUM(sipinflow_amount)::numeric / 10000000, 2) as sip_cr,
+  ROUND(SUM(lumpsuminflow_amount)::numeric / 10000000, 2) as lumpsum_cr,
+  ROUND(SUM(redemption_amount)::numeric / 10000000, 2) as redemption_cr,
+  COUNT(DISTINCT arn_rm) as advisors
+FROM gs_overall_sales
+WHERE business_segment = 'B2C'
+GROUP BY daywise
+ORDER BY daywise ASC
+LIMIT 50
+\`\`\`
+
+**"Top 10 RMs with their names (join employees)"** — JOINS ARE ${allowJoins ? 'ALLOWED — example:' : 'NOT ALLOWED for your access level'}
 ${allowJoins ? `\`\`\`sql
 -- Join pattern: strip W prefix from "RM Emp ID" to match employees.employee_number
 WITH rm_totals AS (
@@ -562,6 +616,9 @@ Always use the available tools to fetch live data. Never guess or approximate nu
   - Any custom filter combination (zone + vertical + threshold)
   - "Vintage", "tenure", "how long", "when did they join" → use employees.date_joined
   - "Breakdown by department / location / gender / year joined" → GROUP BY on employees table
+  - "AUM trend", "monthly AUM", "overall AUM", "how has AUM changed" → use gs_overall_aum
+  - "Historical sales", "month by month sales", "advisor performance over time", "SIP trend" → use gs_overall_sales
+  - "Compare B2B vs B2C over time", "segment-wise trend" → GROUP BY business_segment on gs_overall_aum or gs_overall_sales
 
 **NEVER say "I cannot access that data" or "I don't have access to individual figures" when query_database is available.** Use it. Write the SQL. Return the answer.
 
