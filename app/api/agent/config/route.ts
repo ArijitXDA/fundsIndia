@@ -15,36 +15,50 @@ export async function GET(request: NextRequest) {
 
     const { userId } = JSON.parse(sessionCookie.value);
 
-    // Get user → employee link
+    // Get user record
     const { data: user } = await supabaseAdmin
       .from('users')
-      .select('id, email, employee:employees(id, employee_number, full_name, work_email, job_title, business_unit, department)')
+      .select('id, email, employee_id')
       .eq('id', userId)
       .single();
 
-    if (!user?.employee) return NextResponse.json({ config: null });
+    if (!user) return NextResponse.json({ config: null });
 
-    const employeeId = (user.employee as any).id;
+    // Get employee record (separate query — avoids PostgREST join/schema cache issues)
+    const { data: employee } = await supabaseAdmin
+      .from('employees')
+      .select('id, employee_number, full_name, work_email, job_title, business_unit, department')
+      .eq('work_email', user.email)
+      .single();
 
-    // Get agent access record for this employee
+    if (!employee) return NextResponse.json({ config: null });
+
+    const employeeId = employee.id;
+
+    // Get agent access record for this employee (plain SELECT * — no joins)
     const { data: access } = await supabaseAdmin
       .from('agent_access')
-      .select(`
-        *,
-        persona:agent_personas(*)
-      `)
+      .select('*')
       .eq('employee_id', employeeId)
       .eq('is_active', true)
       .single();
 
     if (!access) return NextResponse.json({ config: null });
 
-    // Merge persona capability flags with per-employee overrides
-    const persona = access.persona as any;
+    // Fetch persona separately if assigned
+    let persona: any = null;
+    if (access.persona_id) {
+      const { data: p } = await supabaseAdmin
+        .from('agent_personas')
+        .select('*')
+        .eq('id', access.persona_id)
+        .single();
+      persona = p ?? null;
+    }
     const effectiveConfig = {
       accessId: access.id,
       employeeId,
-      employee: user.employee,
+      employee,
 
       // Persona details
       persona: persona ? {

@@ -29,13 +29,22 @@ async function getAuthenticatedUser(request: NextRequest) {
 
   const { userId } = JSON.parse(sessionCookie.value);
 
+  // Fetch user first, then employee separately — avoids PostgREST join/schema cache issues
   const { data: user } = await supabaseAdmin
     .from('users')
-    .select('id, email, employee:employees(id, employee_number, full_name, work_email, job_title, business_unit, department)')
+    .select('id, email')
     .eq('id', userId)
     .single();
 
-  return user;
+  if (!user) return null;
+
+  const { data: employee } = await supabaseAdmin
+    .from('employees')
+    .select('id, employee_number, full_name, work_email, job_title, business_unit, department')
+    .eq('work_email', user.email)
+    .single();
+
+  return { ...user, employee: employee ?? null };
 }
 
 // ── SSE helper ────────────────────────────────────────────────────────────────
@@ -77,10 +86,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'message is required' }, { status: 400 });
   }
 
-  // 3. Fetch agent config for this user
+  // 3. Fetch agent config for this user (plain SELECT * — no joins to avoid schema cache issues)
   const { data: access } = await supabaseAdmin
     .from('agent_access')
-    .select('*, persona:agent_personas(*)')
+    .select('*')
     .eq('employee_id', employee.id)
     .eq('is_active', true)
     .single();
@@ -92,7 +101,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const persona = access.persona as any;
+  // Fetch persona separately if assigned
+  let persona: any = null;
+  if (access.persona_id) {
+    const { data: p } = await supabaseAdmin
+      .from('agent_personas')
+      .select('*')
+      .eq('id', access.persona_id)
+      .single();
+    persona = p ?? null;
+  }
 
   // 4. Fetch or create conversation
   let convId = conversationId;
