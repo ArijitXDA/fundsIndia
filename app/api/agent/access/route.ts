@@ -68,19 +68,18 @@ export async function GET(request: NextRequest) {
   const admin = await getDevAdmin(request);
   if (!admin) return NextResponse.json({ error: 'Dev admin access required' }, { status: 403 });
 
-  // Use RPC to bypass PostgREST schema cache entirely
-  const { data, error } = await supabaseAdmin.rpc('get_agent_access_all');
+  // Query the view — fresh schema cache entry, bypasses stale agent_access cache
+  const { data, error } = await supabaseAdmin
+    .from('agent_access_view')
+    .select('*')
+    .order('granted_at', { ascending: false });
 
   if (error) {
     console.error('[agent/access GET] Supabase error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const rows = (data as any[]) ?? [];
-  // Sort by granted_at descending (RPC doesn't guarantee order)
-  rows.sort((a, b) => new Date(b.granted_at).getTime() - new Date(a.granted_at).getTime());
-
-  const hydrated = await hydrateAccessRows(rows);
+  const hydrated = await hydrateAccessRows(data ?? []);
   return NextResponse.json({ access: hydrated });
 }
 
@@ -141,9 +140,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: upsertError.message }, { status: 500 });
   }
 
-  // Fetch the saved row via RPC (bypasses schema cache)
+  // Fetch the saved row via view (fresh schema cache)
   const { data: saved, error: fetchError } = await supabaseAdmin
-    .rpc('get_agent_access_by_employee', { p_employee_id: employee_id });
+    .from('agent_access_view')
+    .select('*')
+    .eq('employee_id', employee_id)
+    .single();
 
   if (fetchError || !saved) {
     return NextResponse.json({ error: fetchError?.message ?? 'Failed to fetch saved record' }, { status: 500 });
@@ -172,20 +174,14 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: updateError.message }, { status: 500 });
   }
 
-  // Fetch updated row via RPC — need employee_id from updates or existing record
-  const employeeId = updates.employee_id;
-  let savedRow: any = null;
-  if (employeeId) {
-    const { data: saved } = await supabaseAdmin
-      .rpc('get_agent_access_by_employee', { p_employee_id: employeeId });
-    savedRow = saved;
-  } else {
-    // Fallback: fetch all and find by id
-    const { data: all } = await supabaseAdmin.rpc('get_agent_access_all');
-    savedRow = (all as any[])?.find((r: any) => r.id === id) ?? null;
-  }
+  // Fetch updated row via view (fresh schema cache)
+  const { data: savedRow, error: fetchError } = await supabaseAdmin
+    .from('agent_access_view')
+    .select('*')
+    .eq('id', id)
+    .single();
 
-  if (!savedRow) return NextResponse.json({ error: 'Failed to fetch updated record' }, { status: 500 });
+  if (fetchError || !savedRow) return NextResponse.json({ error: 'Failed to fetch updated record' }, { status: 500 });
 
   const [hydrated] = await hydrateAccessRows([savedRow]);
   return NextResponse.json({ access: hydrated });

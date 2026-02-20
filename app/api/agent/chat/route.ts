@@ -87,9 +87,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'message is required' }, { status: 400 });
   }
 
-  // 3. Fetch agent config via RPC (bypasses PostgREST schema cache entirely)
+  // 3. Fetch agent config via view (fresh schema cache, bypasses stale agent_access cache)
   const { data: access } = await supabaseAdmin
-    .rpc('get_agent_access_by_employee', { p_employee_id: employee.id });
+    .from('agent_access_view')
+    .select('*')
+    .eq('employee_id', employee.id)
+    .eq('is_active', true)
+    .single();
 
   if (!access) {
     return NextResponse.json(
