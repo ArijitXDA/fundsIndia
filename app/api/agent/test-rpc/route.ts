@@ -60,5 +60,23 @@ export async function GET(_request: NextRequest) {
   // 14. Total active headcount (should be > 0 with 'Working' filter)
   results.t14_headcount = await rpc(`SELECT COUNT(*) as active_count, COUNT(date_joined) as with_date FROM employees WHERE employment_status = 'Working'`);
 
+  // 15. Distinct RM Emp IDs in b2b (sample) — see exact format
+  results.t15_b2b_rm_ids = await rpc(`SELECT DISTINCT "RM Emp ID", SUBSTRING("RM Emp ID" FROM 2) as stripped FROM b2b_sales_current_month LIMIT 5`);
+
+  // 16. Sample employee_numbers — see exact format
+  results.t16_emp_numbers = await rpc(`SELECT employee_number, full_name, business_unit FROM employees WHERE employment_status = 'Working' AND business_unit = 'B2B' LIMIT 5`);
+
+  // 17. Does SUBSTRING strip actually match? Count join hits
+  results.t17_join_count = await rpc(`SELECT COUNT(*) as matched FROM b2b_sales_current_month b JOIN employees e ON e.employee_number = SUBSTRING(b."RM Emp ID" FROM 2)`);
+
+  // 18. Try LPAD match — maybe employee_number has leading zeros?
+  results.t18_lpad_match = await rpc(`SELECT COUNT(*) as matched FROM b2b_sales_current_month b JOIN employees e ON LPAD(e.employee_number, LENGTH(b."RM Emp ID")-1, '0') = SUBSTRING(b."RM Emp ID" FROM 2)`);
+
+  // 19. Vintage WITHOUT join — just employee tenure bands (no sales)
+  results.t19_vintage_only = await rpc(`SELECT CASE WHEN date_joined >= CURRENT_DATE - INTERVAL '1 year' THEN '0-1 yr' WHEN date_joined >= CURRENT_DATE - INTERVAL '3 years' THEN '1-3 yrs' WHEN date_joined >= CURRENT_DATE - INTERVAL '5 years' THEN '3-5 yrs' ELSE '5+ yrs' END as vintage_band, COUNT(*) as headcount FROM employees WHERE employment_status = 'Working' AND business_unit = 'B2B' AND date_joined IS NOT NULL GROUP BY vintage_band ORDER BY headcount DESC`);
+
+  // 20. Distinct business_unit values in employees
+  results.t20_business_units = await rpc(`SELECT DISTINCT business_unit, COUNT(*) as cnt FROM employees WHERE employment_status = 'Working' GROUP BY business_unit`);
+
   return NextResponse.json(results, { status: 200 });
 }
