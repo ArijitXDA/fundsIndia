@@ -1252,12 +1252,15 @@ async function toolQueryDatabase(args: any, ctx: ToolContext) {
     // Simple heuristic: check if any non-allowed table name appears in the SQL
     // (not foolproof but catches obvious cases; the DB role is the real guard)
     const allDataTables = [
-      'b2b_sales_current_month', 'btb_sales_ytd_minus_current_month',
+      'b2b_sales_current_month', 'btb_sales_YTD_minus_current_month',
       'b2c', 'employees', 'targets',
       'users', 'agent_access', 'agent_personas', 'agent_conversations',
       'agent_messages', 'agent_memory',
     ];
-    const disallowedInQuery = allDataTables.filter(t => !queryableTables.includes(t));
+    // Compare case-insensitively — SQL table names may appear quoted or unquoted
+    const disallowedInQuery = allDataTables.filter(
+      t => !queryableTables.map(q => q.toLowerCase()).includes(t.toLowerCase())
+    );
     for (const t of disallowedInQuery) {
       if (upper.includes(t.toUpperCase())) {
         return { error: `Access denied: you do not have permission to query the "${t}" table.` };

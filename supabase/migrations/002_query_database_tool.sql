@@ -47,25 +47,33 @@ END
 $$;
 
 -- Grant SELECT on data tables only — NOT on agent_*, users, auth tables
-GRANT SELECT ON b2b_sales_current_month                TO agent_readonly;
-GRANT SELECT ON btb_sales_YTD_minus_current_month      TO agent_readonly;
-GRANT SELECT ON b2c                                    TO agent_readonly;
-GRANT SELECT ON employees                              TO agent_readonly;
-GRANT SELECT ON targets                                TO agent_readonly;
+-- NOTE: table names with uppercase letters MUST be double-quoted in SQL
+-- (Postgres folds unquoted identifiers to lowercase)
+GRANT SELECT ON "b2b_sales_current_month"               TO agent_readonly;
+GRANT SELECT ON "btb_sales_YTD_minus_current_month"     TO agent_readonly;
+GRANT SELECT ON "b2c"                                   TO agent_readonly;
+GRANT SELECT ON "employees"                             TO agent_readonly;
+GRANT SELECT ON "targets"                               TO agent_readonly;
 
 -- Explicitly revoke everything on sensitive tables (belt-and-suspenders)
-REVOKE ALL ON agent_access        FROM agent_readonly;
-REVOKE ALL ON agent_personas      FROM agent_readonly;
-REVOKE ALL ON agent_conversations FROM agent_readonly;
-REVOKE ALL ON agent_messages      FROM agent_readonly;
-REVOKE ALL ON agent_memory        FROM agent_readonly;
-REVOKE ALL ON users               FROM agent_readonly;
+-- These tables contain auth/config data — agent_readonly must never touch them
+REVOKE ALL ON "agent_access"        FROM agent_readonly;
+REVOKE ALL ON "agent_personas"      FROM agent_readonly;
+REVOKE ALL ON "agent_conversations" FROM agent_readonly;
+REVOKE ALL ON "agent_messages"      FROM agent_readonly;
+REVOKE ALL ON "agent_memory"        FROM agent_readonly;
+REVOKE ALL ON "users"               FROM agent_readonly;
 
 
 -- ── Step 3: Create agent_execute_query() RPC function ────────────────────────
--- SECURITY DEFINER so it can switch to agent_readonly context.
--- Initial owner is postgres (superuser), but we immediately ALTER to agent_readonly.
--- This means the function itself runs with agent_readonly privileges — SELECT only.
+-- The function is owned by postgres (Supabase default) and uses SECURITY DEFINER.
+-- Inside the body we switch to agent_readonly via SET LOCAL ROLE before running
+-- the dynamic query — so even if validation is bypassed, the execution context
+-- only has SELECT on the 5 whitelisted tables.
+--
+-- NOTE: ALTER FUNCTION OWNER TO agent_readonly would fail in Supabase because
+-- you cannot transfer ownership to a role you are not a member of.
+-- SET LOCAL ROLE is the correct Supabase pattern for privilege switching.
 
 CREATE OR REPLACE FUNCTION agent_execute_query(query_sql TEXT)
 RETURNS json
@@ -85,34 +93,37 @@ BEGIN
   END IF;
 
   -- Block DML/DDL patterns even if somehow smuggled past first check
+  -- Uses word-boundary anchors (\m \M) supported by Postgres regex
   IF normalized ~* '\m(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|COPY|EXECUTE|PERFORM|DO)\M' THEN
     RAISE EXCEPTION 'Disallowed SQL keyword detected in query';
   END IF;
 
-  -- Block pg functions that could read/write server files
-  IF normalized ~* '(pg_read_file|pg_ls_dir|lo_export|lo_import|copy_file_range)' THEN
+  -- Block Postgres file/system functions
+  IF normalized ~* '(pg_read_file|pg_ls_dir|lo_export|lo_import|copy_file_range|pg_sleep)' THEN
     RAISE EXCEPTION 'Disallowed system function detected in query';
   END IF;
 
-  -- Execute and aggregate as JSON
+  -- Switch to read-only role for the duration of this transaction statement.
+  -- agent_readonly has SELECT only on the 5 data tables — nothing else.
+  SET LOCAL ROLE agent_readonly;
+
+  -- Execute query and aggregate rows as JSON array
   EXECUTE 'SELECT json_agg(row_to_json(t)) FROM (' || query_sql || ') t'
   INTO result;
 
+  -- Role resets automatically at end of transaction (SET LOCAL scope)
   RETURN COALESCE(result, '[]'::json);
 
 EXCEPTION
   WHEN insufficient_privilege THEN
-    RAISE EXCEPTION 'Access denied: query references a table or column you are not permitted to access';
+    RAISE EXCEPTION 'Access denied: query references a table or column not permitted for agent queries';
   WHEN OTHERS THEN
     RAISE EXCEPTION 'Query error: %', SQLERRM;
 END;
 $$;
 
--- Transfer ownership to agent_readonly so SECURITY DEFINER runs as that role
--- (not as postgres/superuser)
-ALTER FUNCTION agent_execute_query(TEXT) OWNER TO agent_readonly;
-
--- Only service_role can call this function (used by supabaseAdmin in Next.js)
+-- Only service_role can call this function (used by supabaseAdmin in Next.js API route)
+-- authenticated / anon cannot call it directly from the browser
 REVOKE ALL ON FUNCTION agent_execute_query(TEXT) FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION agent_execute_query(TEXT) TO service_role;
 
