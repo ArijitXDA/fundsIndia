@@ -44,7 +44,7 @@ interface AgentConfig {
 interface Conversation {
   id: string;
   title: string;
-  created_at: string;
+  started_at: string;       // agent_conversations uses started_at, not created_at
   last_active_at: string;
   message_count: number;
 }

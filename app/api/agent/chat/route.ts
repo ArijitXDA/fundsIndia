@@ -624,7 +624,7 @@ export async function GET(request: NextRequest) {
     if (conversationId) {
       const { data: conv } = await supabaseAdmin
         .from('agent_conversations')
-        .select('id, title, created_at, last_active_at, message_count')
+        .select('id, title, started_at, last_active_at, message_count')
         .eq('id', conversationId)
         .eq('employee_id', employee.id)
         .single();
@@ -643,7 +643,7 @@ export async function GET(request: NextRequest) {
     // List all conversations
     const { data: conversations } = await supabaseAdmin
       .from('agent_conversations')
-      .select('id, title, created_at, last_active_at, message_count, is_archived')
+      .select('id, title, started_at, last_active_at, message_count, is_archived')
       .eq('employee_id', employee.id)
       .eq('is_archived', false)
       .order('last_active_at', { ascending: false })
