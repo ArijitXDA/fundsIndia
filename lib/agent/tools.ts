@@ -460,11 +460,10 @@ async function toolGetMyPerformance(args: any, ctx: ToolContext) {
         aif_pms_las: acc.aif_pms_las + r.aif_pms_las,
         alternate:   acc.alternate + r.alternate,
         total:       acc.total + r.total,
-        name:        r.name || acc.name,
         zone:        r.zone || acc.zone,
         branch:      r.branch || acc.branch,
       };
-    }, { mf_sif_msci: 0, cob100: 0, aif_pms_las: 0, alternate: 0, total: 0, name: '', zone: '', branch: '' });
+    }, { mf_sif_msci: 0, cob100: 0, aif_pms_las: 0, alternate: 0, total: 0, zone: '', branch: '' });
 
     const sumYtd = (ytdRows ?? []).reduce((acc: any, row: any) => {
       const r = parseYtdRow(row);
@@ -483,7 +482,7 @@ async function toolGetMyPerformance(args: any, ctx: ToolContext) {
     return {
       vertical: 'B2B',
       employee_number: empNum,
-      partner_name: sumMtd.name || empNum,
+      partner_name: empNum,  // Partner Name in sales table is the IFA firm, not the RM — use empNum as identifier
       zone: sumMtd.zone,
       branch: sumMtd.branch,
       mtd: hasMtd ? {
@@ -1012,11 +1011,11 @@ async function toolGetProactiveInsights(args: any, ctx: ToolContext) {
           type: 'team_outlier',
           severity: 'info',
           title: 'Team performance snapshot',
-          detail: `Team avg MTD: ${avg.toFixed(2)} Cr. Top: ${top.name} (${top.total.toFixed(2)} Cr). Needs attention: ${bottom.name} (${bottom.total.toFixed(2)} Cr).`,
+          detail: `Team avg MTD: ${avg.toFixed(2)} Cr. Top: ${top.emp_id} (${top.total.toFixed(2)} Cr). Needs attention: ${bottom.emp_id} (${bottom.total.toFixed(2)} Cr).`,
           team_size: members.length,
           team_avg_cr: avg,
-          top_performer: { name: top.name, employee_number: top.emp_id, mtd_cr: top.total },
-          bottom_performer: { name: bottom.name, employee_number: bottom.emp_id, mtd_cr: bottom.total },
+          top_performer: { employee_number: top.emp_id, mtd_cr: top.total },
+          bottom_performer: { employee_number: bottom.emp_id, mtd_cr: bottom.total },
         });
       }
     }
