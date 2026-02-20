@@ -68,17 +68,19 @@ export async function GET(request: NextRequest) {
   const admin = await getDevAdmin(request);
   if (!admin) return NextResponse.json({ error: 'Dev admin access required' }, { status: 403 });
 
-  const { data, error } = await supabaseAdmin
-    .from('agent_access')
-    .select('*')
-    .order('granted_at', { ascending: false });
+  // Use RPC to bypass PostgREST schema cache entirely
+  const { data, error } = await supabaseAdmin.rpc('get_agent_access_all');
 
   if (error) {
     console.error('[agent/access GET] Supabase error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const hydrated = await hydrateAccessRows(data ?? []);
+  const rows = (data as any[]) ?? [];
+  // Sort by granted_at descending (RPC doesn't guarantee order)
+  rows.sort((a, b) => new Date(b.granted_at).getTime() - new Date(a.granted_at).getTime());
+
+  const hydrated = await hydrateAccessRows(rows);
   return NextResponse.json({ access: hydrated });
 }
 
@@ -111,7 +113,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Upsert — if employee already has access, update instead of error
-  const { data, error } = await supabaseAdmin
+  const { error: upsertError } = await supabaseAdmin
     .from('agent_access')
     .upsert({
       employee_id,
@@ -132,16 +134,22 @@ export async function POST(request: NextRequest) {
       granted_by: admin.userId,
       granted_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'employee_id' })
-    .select('*')
-    .single();
+    }, { onConflict: 'employee_id' });
 
-  if (error) {
-    console.error('[agent/access POST] Supabase error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (upsertError) {
+    console.error('[agent/access POST] Supabase error:', upsertError);
+    return NextResponse.json({ error: upsertError.message }, { status: 500 });
   }
 
-  const [hydrated] = await hydrateAccessRows([data]);
+  // Fetch the saved row via RPC (bypasses schema cache)
+  const { data: saved, error: fetchError } = await supabaseAdmin
+    .rpc('get_agent_access_by_employee', { p_employee_id: employee_id });
+
+  if (fetchError || !saved) {
+    return NextResponse.json({ error: fetchError?.message ?? 'Failed to fetch saved record' }, { status: 500 });
+  }
+
+  const [hydrated] = await hydrateAccessRows([saved]);
   return NextResponse.json({ access: hydrated }, { status: 201 });
 }
 
@@ -154,19 +162,32 @@ export async function PUT(request: NextRequest) {
   const { id, ...updates } = body;
   if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
 
-  const { data, error } = await supabaseAdmin
+  const { error: updateError } = await supabaseAdmin
     .from('agent_access')
     .update({ ...updates, updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .select('*')
-    .single();
+    .eq('id', id);
 
-  if (error) {
-    console.error('[agent/access PUT] Supabase error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (updateError) {
+    console.error('[agent/access PUT] Supabase error:', updateError);
+    return NextResponse.json({ error: updateError.message }, { status: 500 });
   }
 
-  const [hydrated] = await hydrateAccessRows([data]);
+  // Fetch updated row via RPC — need employee_id from updates or existing record
+  const employeeId = updates.employee_id;
+  let savedRow: any = null;
+  if (employeeId) {
+    const { data: saved } = await supabaseAdmin
+      .rpc('get_agent_access_by_employee', { p_employee_id: employeeId });
+    savedRow = saved;
+  } else {
+    // Fallback: fetch all and find by id
+    const { data: all } = await supabaseAdmin.rpc('get_agent_access_all');
+    savedRow = (all as any[])?.find((r: any) => r.id === id) ?? null;
+  }
+
+  if (!savedRow) return NextResponse.json({ error: 'Failed to fetch updated record' }, { status: 500 });
+
+  const [hydrated] = await hydrateAccessRows([savedRow]);
   return NextResponse.json({ access: hydrated });
 }
 

@@ -36,13 +36,9 @@ export async function GET(request: NextRequest) {
 
     const employeeId = employee.id;
 
-    // Get agent access record for this employee (plain SELECT * — no joins)
+    // Get agent access record via RPC (bypasses PostgREST schema cache entirely)
     const { data: access } = await supabaseAdmin
-      .from('agent_access')
-      .select('*')
-      .eq('employee_id', employeeId)
-      .eq('is_active', true)
-      .single();
+      .rpc('get_agent_access_by_employee', { p_employee_id: employeeId });
 
     if (!access) return NextResponse.json({ config: null });
 
