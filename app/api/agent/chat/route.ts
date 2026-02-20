@@ -29,19 +29,20 @@ async function getAuthenticatedUser(request: NextRequest) {
 
   const { userId } = JSON.parse(sessionCookie.value);
 
-  // Fetch user first, then employee separately — avoids PostgREST join/schema cache issues
+  // Fetch user (has employee_id FK column)
   const { data: user } = await supabaseAdmin
     .from('users')
-    .select('id, email')
+    .select('id, email, employee_id')
     .eq('id', userId)
     .single();
 
-  if (!user) return null;
+  if (!user?.employee_id) return null;
 
+  // Fetch employee by PK — separate query avoids PostgREST join/schema cache issues
   const { data: employee } = await supabaseAdmin
     .from('employees')
     .select('id, employee_number, full_name, work_email, job_title, business_unit, department')
-    .eq('work_email', user.email)
+    .eq('id', user.employee_id)
     .single();
 
   return { ...user, employee: employee ?? null };
@@ -189,8 +190,8 @@ export async function POST(request: NextRequest) {
       systemPromptOverride: persona?.system_prompt_override,
     },
     capabilities: {
-      proactiveInsights:   access.override_proactive_insights ?? persona?.can_proactively_surface_insights ?? false,
-      recommendations:     access.override_recommendations ?? persona?.can_make_recommendations ?? false,
+      proactiveInsights:   access.override_can_proactively_surface_insights ?? persona?.can_proactively_surface_insights ?? false,
+      recommendations:     access.override_can_make_recommendations ?? persona?.can_make_recommendations ?? false,
       forecasting:         persona?.can_do_forecasting ?? false,
       contestStrategy:     persona?.can_suggest_contest_strategy ?? false,
       discussOrgStructure: persona?.can_discuss_org_structure ?? false,
@@ -586,7 +587,7 @@ function streamTextResponse(
 
 function filterTools(tools: any[], access: any, persona: any) {
   const canOrgStructure   = persona?.can_discuss_org_structure ?? false;
-  const canProactive      = (access.override_proactive_insights ?? persona?.can_proactively_surface_insights) ?? false;
+  const canProactive      = (access.override_can_proactively_surface_insights ?? persona?.can_proactively_surface_insights) ?? false;
   const canQueryDatabase  = access.can_query_database ?? false;
   const rowScope          = (access.row_scope as any)?.default ?? 'own_only';
   const isAllScope        = rowScope === 'all';

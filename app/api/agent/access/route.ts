@@ -97,9 +97,9 @@ export async function POST(request: NextRequest) {
     denied_tables = [],
     column_filters = {},
     row_scope = {},
-    // DB column names (match agent_access schema exactly)
-    override_proactive_insights,
-    override_recommendations,
+    // Real DB column names (from agent_access schema)
+    override_can_proactively_surface_insights,
+    override_can_make_recommendations,
     can_query_database = false,
     query_db_config = {},
     show_widget_on_dashboard = true,
@@ -122,8 +122,8 @@ export async function POST(request: NextRequest) {
       denied_tables,
       column_filters,
       row_scope,
-      override_proactive_insights: override_proactive_insights ?? null,
-      override_recommendations: override_recommendations ?? null,
+      override_can_proactively_surface_insights: override_can_proactively_surface_insights ?? null,
+      override_can_make_recommendations: override_can_make_recommendations ?? null,
       can_query_database,
       query_db_config,
       show_widget_on_dashboard,

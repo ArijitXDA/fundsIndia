@@ -24,11 +24,12 @@ export async function GET(request: NextRequest) {
 
     if (!user) return NextResponse.json({ config: null });
 
-    // Get employee record (separate query — avoids PostgREST join/schema cache issues)
+    // Get employee record via users.employee_id FK — separate query avoids PostgREST join issues
+    if (!user.employee_id) return NextResponse.json({ config: null });
     const { data: employee } = await supabaseAdmin
       .from('employees')
       .select('id, employee_number, full_name, work_email, job_title, business_unit, department')
-      .eq('work_email', user.email)
+      .eq('id', user.employee_id)
       .single();
 
     if (!employee) return NextResponse.json({ config: null });
@@ -77,12 +78,12 @@ export async function GET(request: NextRequest) {
       } : null,
 
       // Effective capability flags (override > persona > false)
-      // DB column names: override_proactive_insights, override_recommendations
+      // DB column names: override_can_proactively_surface_insights, override_can_make_recommendations
       capabilities: {
-        proactiveInsights: access.override_proactive_insights
+        proactiveInsights: access.override_can_proactively_surface_insights
           ?? persona?.can_proactively_surface_insights
           ?? false,
-        recommendations: access.override_recommendations
+        recommendations: access.override_can_make_recommendations
           ?? persona?.can_make_recommendations
           ?? false,
         forecasting:          persona?.can_do_forecasting          ?? false,
