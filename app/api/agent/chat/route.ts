@@ -171,8 +171,8 @@ export async function POST(request: NextRequest) {
       systemPromptOverride: persona?.system_prompt_override,
     },
     capabilities: {
-      proactiveInsights:   access.override_can_proactively_surface_insights ?? persona?.can_proactively_surface_insights ?? false,
-      recommendations:     access.override_can_make_recommendations ?? persona?.can_make_recommendations ?? false,
+      proactiveInsights:   access.override_proactive_insights ?? persona?.can_proactively_surface_insights ?? false,
+      recommendations:     access.override_recommendations ?? persona?.can_make_recommendations ?? false,
       forecasting:         persona?.can_do_forecasting ?? false,
       contestStrategy:     persona?.can_suggest_contest_strategy ?? false,
       discussOrgStructure: persona?.can_discuss_org_structure ?? false,
@@ -568,7 +568,7 @@ function streamTextResponse(
 
 function filterTools(tools: any[], access: any, persona: any) {
   const canOrgStructure   = persona?.can_discuss_org_structure ?? false;
-  const canProactive      = (access.override_can_proactively_surface_insights ?? persona?.can_proactively_surface_insights) ?? false;
+  const canProactive      = (access.override_proactive_insights ?? persona?.can_proactively_surface_insights) ?? false;
   const canQueryDatabase  = access.can_query_database ?? false;
   const rowScope          = (access.row_scope as any)?.default ?? 'own_only';
   const isAllScope        = rowScope === 'all';

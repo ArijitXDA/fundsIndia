@@ -63,12 +63,12 @@ export async function GET(request: NextRequest) {
       } : null,
 
       // Effective capability flags (override > persona > false)
-      // Live schema columns: override_can_proactively_surface_insights, override_can_make_recommendations
+      // DB column names: override_proactive_insights, override_recommendations
       capabilities: {
-        proactiveInsights: access.override_can_proactively_surface_insights
+        proactiveInsights: access.override_proactive_insights
           ?? persona?.can_proactively_surface_insights
           ?? false,
-        recommendations: access.override_can_make_recommendations
+        recommendations: access.override_recommendations
           ?? persona?.can_make_recommendations
           ?? false,
         forecasting:          persona?.can_do_forecasting          ?? false,
