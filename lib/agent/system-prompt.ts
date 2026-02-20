@@ -9,6 +9,13 @@
 // Layer 5: Memory injection
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface QueryDbConfig {
+  result_limit?:     number;
+  allow_aggregates?: boolean;
+  allow_joins?:      boolean;
+  blocked_columns?:  Record<string, string[]>;
+}
+
 export interface SystemPromptConfig {
   agentName: string;
   employee: {
@@ -29,6 +36,7 @@ export interface SystemPromptConfig {
     forecasting: boolean;
     contestStrategy: boolean;
     discussOrgStructure: boolean;
+    queryDatabase: boolean;
   };
   dataAccess: {
     accessDescription?: string | null;
@@ -37,6 +45,7 @@ export interface SystemPromptConfig {
     allowedTables?: string[] | null;
     deniedTables?: string[] | null;
   };
+  queryDbConfig?: QueryDbConfig | null;
   memory?: MemoryItem[];
 }
 
@@ -83,6 +92,7 @@ export function buildSystemPrompt(config: SystemPromptConfig): string {
     buildIdentityBlock(config),
     buildUserContextBlock(config),
     buildAccessGuardrailsBlock(config),
+    buildQueryDatabaseBlock(config),
     buildPersonaBehaviourBlock(config),
     buildMemoryBlock(config.memory),
     buildClosingBlock(),
@@ -136,6 +146,9 @@ function buildAccessGuardrailsBlock(config: SystemPromptConfig): string {
   if (capabilities.discussOrgStructure) canDo.push('Discuss org structure and reporting chains');
   else cannotDo.push('Discuss org structure details (not enabled for this user)');
 
+  if (capabilities.queryDatabase) canDo.push('Use query_database to run custom SQL SELECT queries for ad-hoc data questions');
+  else cannotDo.push('Use the query_database tool (not enabled for this user — use the specific tools instead)');
+
   // Table access
   const allowedTables = dataAccess.allowedTables;
   const deniedTables = dataAccess.deniedTables ?? [];
@@ -160,6 +173,109 @@ ${cannotDo.length > 0 ? `**You CANNOT:**\n${cannotDo.map(c => `- ${c}`).join('\n
 ${accessNote}
 
 Never expose raw employee IDs, UUIDs, or internal system fields in your responses. Translate all data into human-readable form. Always cite the period (MTD/YTD) when quoting figures.`;
+}
+
+// ── Layer 3b: query_database schema + guardrails (only when enabled) ──────────
+
+function buildQueryDatabaseBlock(config: SystemPromptConfig): string {
+  if (!config.capabilities.queryDatabase) return '';
+
+  const cfg  = config.queryDbConfig ?? {};
+  const limit          = cfg.result_limit     ?? 200;
+  const allowAggregates = cfg.allow_aggregates ?? true;
+  const allowJoins      = cfg.allow_joins      ?? false;
+  const blocked         = cfg.blocked_columns  ?? {};
+
+  // Derive allowed tables for query_database (exclude agent/* tables)
+  const allowedTables = (config.dataAccess.allowedTables ?? []).filter(
+    t => !t.startsWith('agent_') && t !== 'users'
+  );
+
+  const blockedColLines = Object.entries(blocked)
+    .filter(([, cols]) => cols.length > 0)
+    .map(([table, cols]) => `  - ${table}: ${cols.join(', ')}`)
+    .join('\n');
+
+  return `## Database Query Tool (query_database)
+You have access to the query_database tool to write custom SQL SELECT queries. Use it when the specific tools don't cover the user's question.
+
+### Guardrails for this user
+- **Max rows per query:** ${limit}
+- **Aggregate functions (SUM, COUNT, AVG, GROUP BY):** ${allowAggregates ? 'ALLOWED' : 'NOT ALLOWED — do not use GROUP BY or aggregate functions'}
+- **JOIN queries:** ${allowJoins ? 'ALLOWED' : 'NOT ALLOWED — query one table at a time'}
+- **Tables you may query:** ${allowedTables.length > 0 ? allowedTables.join(', ') : 'all data tables as per your row_scope'}
+${blockedColLines ? `- **Blocked columns (never return these):** \n${blockedColLines}` : ''}
+
+### Database Schema Reference
+
+#### b2b_sales_current_month — B2B MTD Sales (current month)
+| Column | Type | Notes |
+|---|---|---|
+| "RM Emp ID" | text | W-prefixed employee ID (e.g. W1234) |
+| "Partner Name" | text | ARN/partner name |
+| "MF+SIF+MSCI" | numeric | MF + SIF + MSCI sales in Cr |
+| "COB (100%)" | numeric | COB at 100% in Cr |
+| "AIF+PMS+LAS+DYNAMO (TRAIL)" | numeric | Alternate trail in Cr |
+| "ALTERNATE" | numeric | Alternate total in Cr |
+| "Total Net Sales (COB 100%)" | numeric | Grand total in Cr |
+| "Branch" | text | Branch name |
+| "Zone" | text | Zone name |
+
+#### btb_sales_YTD_minus_current_month — B2B YTD Sales (excl. current month)
+| Column | Type | Notes |
+|---|---|---|
+| "RM Emp ID" | text | W-prefixed employee ID |
+| "Partner Name" | text | ARN/partner name |
+| "MF+SIF+MSCI" | numeric | YTD MF+SIF+MSCI in Cr |
+| "SUM of COB (100%)" | numeric | YTD COB at 100% in Cr |
+| "SUM of AIF+PMS+LAS (TRAIL)" | numeric | YTD alternate trail in Cr |
+| "SUM of ALT" | numeric | YTD alternate in Cr |
+| "Total Net Sales (COB 100%)" | numeric | YTD grand total in Cr |
+| "Branch" | text | Branch name |
+| "Zone" | text | Zone name |
+
+#### b2c — B2C Advisor Performance
+| Column | Type | Notes |
+|---|---|---|
+| advisor | text | Advisor work email address |
+| team | text | Team name |
+| "net_inflow_mtd[cr]" | numeric | Net inflow MTD in Cr |
+| "net_inflow_ytd[cr]" | numeric | Net inflow YTD in Cr |
+| "current_aum_mtm [cr.]" | numeric | Current AUM in Cr |
+| "aum_growth_mtm %" | numeric | AUM growth % |
+| assigned_leads | integer | Number of assigned leads |
+| "new_sip_inflow_ytd[cr.]" | numeric | New SIP inflow YTD in Cr |
+
+#### employees — Employee Directory
+| Column | Type | Notes |
+|---|---|---|
+| employee_number | text | W-prefixed (e.g. W1234) |
+| full_name | text | Display name |
+| work_email | text | Email address |
+| gender | text | |
+| location | text | City/location |
+| business_unit | text | B2B, B2C, or PW |
+| department | text | Department name |
+| job_title | text | Role title |
+| reporting_manager_emp_number | text | Manager's employee_number |
+| employment_status | text | Active or Inactive |
+
+#### targets — Performance Targets
+| Column | Type | Notes |
+|---|---|---|
+| employee_id | uuid | References employees.id (internal UUID) |
+| business_unit | text | B2B, B2C, or PW |
+| target_type | text | monthly or quarterly |
+| target_value | numeric | Target in Cr |
+| period_start | date | Period start date |
+| period_end | date | Period end date |
+
+### SQL Writing Rules
+1. Always double-quote column names containing spaces, brackets, +, or % (e.g. \`"RM Emp ID"\`, \`"MF+SIF+MSCI"\`)
+2. B2B employee IDs are W-prefixed — use \`WHERE "RM Emp ID" = 'W1234'\`
+3. B2C advisors map via email — use \`WHERE advisor = 'name@fundsindia.com'\`
+4. Always include \`LIMIT ${limit}\` unless the user explicitly asks for all rows
+5. Prefer specific tools (get_my_performance, get_team_performance, etc.) for common queries — use query_database only for custom/ad-hoc needs`;
 }
 
 // ── Layer 4: Persona Behaviour ────────────────────────────────────────────────

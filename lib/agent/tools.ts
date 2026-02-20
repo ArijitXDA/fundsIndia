@@ -292,6 +292,34 @@ export const AGENT_TOOLS = [
   {
     type: 'function' as const,
     function: {
+      name: 'query_database',
+      description: `Execute a custom SQL SELECT query directly against the database. Use this for ad-hoc questions that the specific tools (get_my_performance, get_team_performance, etc.) don't cover — e.g. custom multi-column filters, specific employee lookups, cross-table analysis, zone breakdowns, or any question requiring bespoke data retrieval.
+
+Rules:
+- ONLY SELECT statements. Never INSERT, UPDATE, DELETE, DROP, or any DML/DDL.
+- Always add LIMIT unless the user explicitly wants all rows (respect the result_limit in your config).
+- Column names with spaces or special characters MUST be wrapped in double-quotes (e.g. "RM Emp ID", "MF+SIF+MSCI", "net_inflow_mtd[cr]").
+- Only query tables you have been granted access to (see your allowed tables).
+- Include an explanation of what the query does for the audit log.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          sql: {
+            type: 'string',
+            description: 'The SQL SELECT query to execute. Must start with SELECT. Use double-quotes around column names that contain spaces, brackets, or special characters.',
+          },
+          explanation: {
+            type: 'string',
+            description: 'One-sentence description of what this query fetches, used for logging.',
+          },
+        },
+        required: ['sql', 'explanation'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'save_memory',
       description: 'Persist a piece of information about the user to memory so it can be recalled in future sessions. Use this when the user shares preferences, goals, context, or anything worth remembering long-term. Examples: preferred reporting format, personal targets, noted concerns, focus areas.',
       parameters: {
@@ -323,13 +351,21 @@ export const AGENT_TOOLS = [
 
 // ─── Tool Context ─────────────────────────────────────────────────────────────
 
+export interface QueryDbConfig {
+  result_limit?:     number;                       // max rows returned (default 200, hard-cap 1000)
+  allow_aggregates?: boolean;                      // allow GROUP BY, SUM, COUNT, AVG, HAVING
+  allow_joins?:      boolean;                      // allow JOIN keyword
+  blocked_columns?:  Record<string, string[]>;     // { tableName: [col1, col2] } — stripped post-query
+}
+
 export interface ToolContext {
-  employeeNumber: string;
-  employeeId:     string;
-  businessUnit:   string;
-  workEmail:      string;
-  rowScope:       Record<string, string> | null;
-  allowedTables:  string[] | null;
+  employeeNumber:  string;
+  employeeId:      string;
+  businessUnit:    string;
+  workEmail:       string;
+  rowScope:        Record<string, string> | null;
+  allowedTables:   string[] | null;
+  queryDbConfig?:  QueryDbConfig | null;           // only set when can_query_database = true
 }
 
 // ─── Tool Dispatcher ──────────────────────────────────────────────────────────
@@ -371,6 +407,9 @@ export async function executeTool(
 
     case 'save_memory':
       return await toolSaveMemory(args, ctx);
+
+    case 'query_database':
+      return await toolQueryDatabase(args, ctx);
 
     default:
       return { error: `Unknown tool: ${toolName}` };
@@ -1149,5 +1188,136 @@ async function toolSaveMemory(args: any, ctx: ToolContext) {
     memory_type,
     expires_at: expires_at ?? 'never',
     message: `I've remembered that: "${key}" = "${value}".`,
+  };
+}
+
+// ── Tool: query_database ───────────────────────────────────────────────────────
+// Lets the agent write a custom SQL SELECT and execute it via a Supabase RPC
+// function (agent_execute_query) that runs under the agent_readonly role —
+// SELECT-only, no access to auth/agent tables.
+//
+// Guardrails (per-user, from query_db_config in agent_access):
+//   result_limit     — hard row cap (default 200, max 1000)
+//   allow_aggregates — if false, rejects GROUP BY / aggregate functions
+//   allow_joins      — if false, rejects JOIN keyword
+//   blocked_columns  — strips those keys from every returned row
+
+async function toolQueryDatabase(args: any, ctx: ToolContext) {
+  const sql:         string = String(args.sql ?? '').trim();
+  const explanation: string = String(args.explanation ?? '').trim().slice(0, 300);
+
+  if (!sql) return { error: 'sql is required' };
+
+  // ── App-layer guardrails ──────────────────────────────────────────────────
+
+  const cfg = ctx.queryDbConfig ?? {};
+  const resultLimit    = Math.min(cfg.result_limit ?? 200, 1000);
+  const allowAggregates = cfg.allow_aggregates ?? true;
+  const allowJoins      = cfg.allow_joins      ?? false;
+
+  const upper = sql.toUpperCase();
+
+  // Must be a SELECT
+  if (!/^\s*SELECT\b/.test(upper)) {
+    return { error: 'Only SELECT queries are permitted. Your query must start with SELECT.' };
+  }
+
+  // Block DML/DDL at app layer too (defence in depth — RPC also blocks)
+  const dangerousKeywords = /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|COPY|EXECUTE|PERFORM)\b/;
+  if (dangerousKeywords.test(upper)) {
+    return { error: 'Disallowed SQL keyword detected. Only SELECT statements are permitted.' };
+  }
+
+  // Aggregate check
+  if (!allowAggregates) {
+    const aggregatePattern = /\b(GROUP\s+BY|HAVING|SUM\s*\(|COUNT\s*\(|AVG\s*\(|MIN\s*\(|MAX\s*\()\b/;
+    if (aggregatePattern.test(upper)) {
+      return { error: 'Aggregate functions and GROUP BY are not enabled for your access level.' };
+    }
+  }
+
+  // JOIN check
+  if (!allowJoins) {
+    if (/\bJOIN\b/.test(upper)) {
+      return { error: 'JOIN queries are not enabled for your access level.' };
+    }
+  }
+
+  // Table access check — ensure query only references allowed tables
+  if (ctx.allowedTables && ctx.allowedTables.length > 0) {
+    // Data tables the agent can query (exclude agent/* tables from allowed list for this tool)
+    const queryableTables = ctx.allowedTables.filter(t =>
+      !t.startsWith('agent_') && t !== 'users'
+    );
+    // Simple heuristic: check if any non-allowed table name appears in the SQL
+    // (not foolproof but catches obvious cases; the DB role is the real guard)
+    const allDataTables = [
+      'b2b_sales_current_month', 'btb_sales_ytd_minus_current_month',
+      'b2c', 'employees', 'targets',
+      'users', 'agent_access', 'agent_personas', 'agent_conversations',
+      'agent_messages', 'agent_memory',
+    ];
+    const disallowedInQuery = allDataTables.filter(t => !queryableTables.includes(t));
+    for (const t of disallowedInQuery) {
+      if (upper.includes(t.toUpperCase())) {
+        return { error: `Access denied: you do not have permission to query the "${t}" table.` };
+      }
+    }
+  }
+
+  // Inject LIMIT if not already present
+  let finalSql = sql;
+  if (!/\bLIMIT\s+\d+\b/i.test(sql)) {
+    finalSql = `${sql.replace(/;?\s*$/, '')} LIMIT ${resultLimit}`;
+  }
+
+  // Audit log
+  console.log(`[agent:query_database] emp=${ctx.employeeId} | ${explanation} | SQL: ${finalSql}`);
+
+  // ── Execute via RPC ───────────────────────────────────────────────────────
+  let rows: Record<string, any>[];
+  try {
+    const { data, error } = await supabaseAdmin.rpc('agent_execute_query', {
+      query_sql: finalSql,
+    });
+
+    if (error) {
+      console.error('[agent:query_database] RPC error:', error.message);
+      return { error: `Query failed: ${error.message}` };
+    }
+
+    rows = Array.isArray(data) ? data : [];
+  } catch (err: any) {
+    console.error('[agent:query_database] exception:', err.message);
+    return { error: `Query execution error: ${err.message ?? 'Unknown error'}` };
+  }
+
+  // ── Post-processing: strip blocked columns ────────────────────────────────
+  const blockedColumns = cfg.blocked_columns ?? {};
+  if (Object.keys(blockedColumns).length > 0) {
+    // Collect all blocked column names (union across all tables — we don't know
+    // which table each column came from without parsing, so strip globally)
+    const allBlocked = new Set<string>(
+      Object.values(blockedColumns).flat()
+    );
+    if (allBlocked.size > 0) {
+      rows = rows.map(row => {
+        const cleaned: Record<string, any> = {};
+        for (const [k, v] of Object.entries(row)) {
+          if (!allBlocked.has(k)) cleaned[k] = v;
+        }
+        return cleaned;
+      });
+    }
+  }
+
+  // Hard cap — ensure we never send more than resultLimit rows to the LLM
+  const capped = rows.slice(0, resultLimit);
+
+  return {
+    row_count:    capped.length,
+    total_found:  rows.length,
+    rows:         capped,
+    explanation,
   };
 }

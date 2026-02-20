@@ -33,6 +33,13 @@ interface Persona {
   created_at: string;
 }
 
+interface QueryDbConfig {
+  result_limit?:     number;
+  allow_aggregates?: boolean;
+  allow_joins?:      boolean;
+  blocked_columns?:  Record<string, string[]>;
+}
+
 interface AccessRecord {
   id: string;
   employee_id: string;
@@ -45,6 +52,8 @@ interface AccessRecord {
   row_scope: Record<string, string>;
   override_can_proactively_surface_insights: boolean | null;
   override_can_make_recommendations: boolean | null;
+  can_query_database: boolean;
+  query_db_config: QueryDbConfig;
   show_widget_on_dashboard: boolean;
   widget_greeting: string | null;
   is_active: boolean;
@@ -284,6 +293,8 @@ export default function AgentManagement({ showToast }: { showToast: (type: 'succ
                   denied_tables: [],
                   column_filters: {},
                   row_scope: { default: 'own_and_team' },
+                  can_query_database: false,
+                  query_db_config: { result_limit: 200, allow_aggregates: true, allow_joins: false, blocked_columns: {} },
                   show_widget_on_dashboard: true,
                   widget_greeting: '',
                   is_active: true,
@@ -932,6 +943,113 @@ function AccessEditor({ record, onChange, personas, isNew, empSearch, setEmpSear
         </div>
       </div>
 
+      {/* Direct DB Query Access */}
+      <div className={`rounded-xl border-2 p-4 transition-all ${record.can_query_database ? 'border-amber-300 bg-amber-50' : 'border-gray-200 bg-gray-50'}`}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center space-x-2">
+            <Database className="w-4 h-4 text-amber-600" />
+            <p className="text-xs font-bold text-gray-700 uppercase tracking-wider">Direct DB Query Access</p>
+            {record.can_query_database && (
+              <span className="text-[10px] bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0.5 rounded-full font-semibold">ENABLED</span>
+            )}
+          </div>
+          <label className="flex items-center space-x-2 cursor-pointer">
+            <span className="text-xs text-gray-500">Allow query_database tool</span>
+            <div
+              onClick={() => set('can_query_database', !record.can_query_database)}
+              className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer ${record.can_query_database ? 'bg-amber-500' : 'bg-gray-300'}`}
+            >
+              <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${record.can_query_database ? 'translate-x-5' : 'translate-x-0.5'}`} />
+            </div>
+          </label>
+        </div>
+        <p className="text-xs text-gray-500 mb-3">
+          Lets the agent write custom SQL SELECT queries against the database. Use for power users and leadership only.
+          <span className="text-amber-700 font-medium"> All queries are SELECT-only and logged.</span>
+        </p>
+
+        {record.can_query_database && (
+          <div className="space-y-4 pt-3 border-t border-amber-200">
+
+            {/* Result limit */}
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold text-gray-700">Max rows per query</p>
+                <p className="text-xs text-gray-400">Hard cap on rows returned to the agent</p>
+              </div>
+              <input
+                type="number"
+                min={10} max={1000} step={10}
+                value={(record.query_db_config as QueryDbConfig)?.result_limit ?? 200}
+                onChange={e => set('query_db_config', {
+                  ...(record.query_db_config as QueryDbConfig ?? {}),
+                  result_limit: Math.min(1000, Math.max(10, parseInt(e.target.value) || 200)),
+                })}
+                className="w-24 border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-center focus:ring-2 focus:ring-amber-400"
+              />
+            </div>
+
+            {/* Aggregate functions */}
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold text-gray-700">Allow aggregate functions</p>
+                <p className="text-xs text-gray-400">SUM, COUNT, AVG, GROUP BY, HAVING</p>
+              </div>
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <div
+                  onClick={() => set('query_db_config', {
+                    ...(record.query_db_config as QueryDbConfig ?? {}),
+                    allow_aggregates: !((record.query_db_config as QueryDbConfig)?.allow_aggregates ?? true),
+                  })}
+                  className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer ${(record.query_db_config as QueryDbConfig)?.allow_aggregates !== false ? 'bg-green-500' : 'bg-gray-300'}`}
+                >
+                  <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${(record.query_db_config as QueryDbConfig)?.allow_aggregates !== false ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                </div>
+                <span className="text-xs text-gray-500">
+                  {(record.query_db_config as QueryDbConfig)?.allow_aggregates !== false ? 'Allowed' : 'Blocked'}
+                </span>
+              </label>
+            </div>
+
+            {/* JOIN queries */}
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold text-gray-700">Allow JOIN queries</p>
+                <p className="text-xs text-gray-400">Cross-table joins (JOIN, LEFT JOIN, etc.)</p>
+              </div>
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <div
+                  onClick={() => set('query_db_config', {
+                    ...(record.query_db_config as QueryDbConfig ?? {}),
+                    allow_joins: !((record.query_db_config as QueryDbConfig)?.allow_joins ?? false),
+                  })}
+                  className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer ${(record.query_db_config as QueryDbConfig)?.allow_joins ? 'bg-green-500' : 'bg-gray-300'}`}
+                >
+                  <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${(record.query_db_config as QueryDbConfig)?.allow_joins ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                </div>
+                <span className="text-xs text-gray-500">
+                  {(record.query_db_config as QueryDbConfig)?.allow_joins ? 'Allowed' : 'Blocked'}
+                </span>
+              </label>
+            </div>
+
+            {/* Blocked columns */}
+            <div>
+              <p className="text-xs font-semibold text-gray-700 mb-1">Blocked columns</p>
+              <p className="text-xs text-gray-400 mb-2">These columns are stripped from every query result before the agent sees them. Format: <code className="bg-gray-100 px-1 rounded">table:column</code></p>
+              <BlockedColumnsEditor
+                value={(record.query_db_config as QueryDbConfig)?.blocked_columns ?? {}}
+                onChange={bc => set('query_db_config', {
+                  ...(record.query_db_config as QueryDbConfig ?? {}),
+                  blocked_columns: bc,
+                })}
+              />
+            </div>
+
+          </div>
+        )}
+      </div>
+
       {/* Widget settings */}
       <div>
         <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Dashboard Widget</p>
@@ -959,6 +1077,108 @@ function AccessEditor({ record, onChange, personas, isNew, empSearch, setEmpSear
           Cancel
         </button>
       </div>
+    </div>
+  );
+}
+
+// ─── BlockedColumnsEditor ──────────────────────────────────────────────────────
+// Mini sub-component for editing the blocked_columns map in query_db_config.
+// Renders existing entries as removable chips and provides an add-new input.
+
+const QUERYABLE_TABLES = [
+  'employees',
+  'b2b_sales_current_month',
+  'btb_sales_YTD_minus_current_month',
+  'b2c',
+  'targets',
+];
+
+function BlockedColumnsEditor({
+  value,
+  onChange,
+}: {
+  value: Record<string, string[]>;
+  onChange: (v: Record<string, string[]>) => void;
+}) {
+  const [newTable, setNewTable]   = useState(QUERYABLE_TABLES[0]);
+  const [newColumn, setNewColumn] = useState('');
+
+  const addEntry = () => {
+    const col = newColumn.trim();
+    if (!col) return;
+    const existing = value[newTable] ?? [];
+    if (existing.includes(col)) return;
+    onChange({ ...value, [newTable]: [...existing, col] });
+    setNewColumn('');
+  };
+
+  const removeEntry = (table: string, col: string) => {
+    const updated = (value[table] ?? []).filter(c => c !== col);
+    const next = { ...value };
+    if (updated.length === 0) delete next[table];
+    else next[table] = updated;
+    onChange(next);
+  };
+
+  const hasEntries = Object.values(value).some(cols => cols.length > 0);
+
+  return (
+    <div className="space-y-2">
+      {/* Existing blocked entries */}
+      {hasEntries && (
+        <div className="space-y-1.5">
+          {Object.entries(value).map(([table, cols]) =>
+            cols.map(col => (
+              <div key={`${table}:${col}`} className="flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
+                <span className="text-xs text-red-700">
+                  <span className="font-semibold">{table}</span>
+                  <span className="text-red-400 mx-1">·</span>
+                  <code className="bg-red-100 px-1 rounded">{col}</code>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeEntry(table, col)}
+                  className="text-red-400 hover:text-red-600 ml-2"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Add new blocked column */}
+      <div className="flex items-center space-x-2">
+        <select
+          value={newTable}
+          onChange={e => setNewTable(e.target.value)}
+          className="text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:ring-2 focus:ring-amber-400 flex-shrink-0"
+        >
+          {QUERYABLE_TABLES.map(t => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+        <input
+          type="text"
+          value={newColumn}
+          onChange={e => setNewColumn(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addEntry(); } }}
+          placeholder='column name (e.g. mobile_phone)'
+          className="text-xs border border-gray-300 rounded-lg px-2 py-1.5 flex-1 focus:ring-2 focus:ring-amber-400"
+        />
+        <button
+          type="button"
+          onClick={addEntry}
+          disabled={!newColumn.trim()}
+          className="text-xs px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-semibold disabled:opacity-40 transition-colors flex-shrink-0"
+        >
+          Block
+        </button>
+      </div>
+      {!hasEntries && (
+        <p className="text-xs text-gray-400 italic">No columns blocked — all columns from allowed tables are visible to the agent.</p>
+      )}
     </div>
   );
 }

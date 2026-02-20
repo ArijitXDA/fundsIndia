@@ -171,11 +171,12 @@ export async function POST(request: NextRequest) {
       systemPromptOverride: persona?.system_prompt_override,
     },
     capabilities: {
-      proactiveInsights: access.override_can_proactively_surface_insights ?? persona?.can_proactively_surface_insights ?? false,
-      recommendations:   access.override_can_make_recommendations ?? persona?.can_make_recommendations ?? false,
-      forecasting:       persona?.can_do_forecasting ?? false,
-      contestStrategy:   persona?.can_suggest_contest_strategy ?? false,
+      proactiveInsights:   access.override_can_proactively_surface_insights ?? persona?.can_proactively_surface_insights ?? false,
+      recommendations:     access.override_can_make_recommendations ?? persona?.can_make_recommendations ?? false,
+      forecasting:         persona?.can_do_forecasting ?? false,
+      contestStrategy:     persona?.can_suggest_contest_strategy ?? false,
       discussOrgStructure: persona?.can_discuss_org_structure ?? false,
+      queryDatabase:       access.can_query_database ?? false,
     },
     dataAccess: {
       accessDescription:   access.access_description,
@@ -184,17 +185,19 @@ export async function POST(request: NextRequest) {
       allowedTables:       access.allowed_tables,
       deniedTables:        access.denied_tables,
     },
+    queryDbConfig: (access.query_db_config as any) ?? null,
     memory: memoryRows ?? [],
   });
 
   // 7. Build tool context
   const toolCtx: ToolContext = {
-    employeeNumber: employee.employee_number,
-    employeeId:     employee.id,
-    businessUnit:   employee.business_unit,
-    workEmail:      (employee.work_email ?? '').trim().toLowerCase(),
-    rowScope:       access.row_scope as any,
-    allowedTables:  access.allowed_tables,
+    employeeNumber:  employee.employee_number,
+    employeeId:      employee.id,
+    businessUnit:    employee.business_unit,
+    workEmail:       (employee.work_email ?? '').trim().toLowerCase(),
+    rowScope:        access.row_scope as any,
+    allowedTables:   access.allowed_tables,
+    queryDbConfig:   access.can_query_database ? (access.query_db_config as any ?? {}) : null,
   };
 
   // 8. Build messages array for OpenAI
@@ -564,16 +567,18 @@ function streamTextResponse(
 // ── Tool filter based on capabilities ────────────────────────────────────────
 
 function filterTools(tools: any[], access: any, persona: any) {
-  const canOrgStructure = persona?.can_discuss_org_structure ?? false;
-  const canProactive    = (access.override_can_proactively_surface_insights ?? persona?.can_proactively_surface_insights) ?? false;
-  const rowScope        = (access.row_scope as any)?.default ?? 'own_only';
-  const isAllScope      = rowScope === 'all';
+  const canOrgStructure   = persona?.can_discuss_org_structure ?? false;
+  const canProactive      = (access.override_can_proactively_surface_insights ?? persona?.can_proactively_surface_insights) ?? false;
+  const canQueryDatabase  = access.can_query_database ?? false;
+  const rowScope          = (access.row_scope as any)?.default ?? 'own_only';
+  const isAllScope        = rowScope === 'all';
 
   return tools.filter(t => {
-    if (t.function.name === 'get_org_structure' && !canOrgStructure) return false;
-    if (t.function.name === 'get_proactive_insights' && !canProactive) return false;
-    // get_company_summary only available to all-scope users (leadership / Group CEO)
-    if (t.function.name === 'get_company_summary' && !isAllScope) return false;
+    if (t.function.name === 'get_org_structure'      && !canOrgStructure)  return false;
+    if (t.function.name === 'get_proactive_insights' && !canProactive)     return false;
+    if (t.function.name === 'get_company_summary'    && !isAllScope)       return false;
+    // query_database only available when explicitly enabled per-user in agent_access
+    if (t.function.name === 'query_database'         && !canQueryDatabase) return false;
     return true;
   });
 }
