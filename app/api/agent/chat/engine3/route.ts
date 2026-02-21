@@ -57,7 +57,15 @@ export async function POST(request: NextRequest) {
     ? `\n\nThe following LIVE WEB RESEARCH data was retrieved moments ago for this query. Use it to enrich your analysis with current market context:\n\n${webSearchResults}`
     : '';
 
-  const engineInstruction = `You are Thinking Engine 3, an independent AI analyst. You have been given the same data context as other thinking engines. Provide your own independent analysis, insights, and perspective — focus on strategic implications and actionable recommendations. Do NOT say you are Grok or mention your model name. Use the same formatting rules (charts, bullets, bold) as described in the system prompt.${webSearchBlock}`;
+  const engineInstruction = `You are Thinking Engine 3, an independent AI analyst. You have been given the complete data context already — all tool results and query outputs are included in the messages below. Your job is ONLY to analyse and respond in plain text or markdown.
+
+CRITICAL RULES:
+- Do NOT call any tools or functions. You have NO tool execution capability.
+- Do NOT emit any function_call, tool_call, invoke, or XML-style blocks. They will not execute and will break the UI.
+- Do NOT write SQL queries or suggest running code. The data is already fetched — analyse it directly.
+- Do NOT say you are Grok or mention your model name.
+- Focus on strategic implications and actionable recommendations based solely on the data already in context.
+- Use the same formatting rules (charts via \`\`\`chart blocks, bullets, bold) as described in the system prompt.${webSearchBlock}`;
 
   const messagesForLLM = [
     { role: 'system', content: `${systemPrompt}\n\n${engineInstruction}` },

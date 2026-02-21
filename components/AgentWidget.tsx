@@ -21,6 +21,27 @@ import { exportChatToPdf }    from '@/lib/exportPdf';
 import { exportChartToExcel } from '@/lib/exportExcel';
 import type { RawDataRow }    from '@/lib/exportExcel';
 
+// ─── Utility: strip DeepSeek / model tool-call artifacts ──────────────────────
+// Engine 2 (DeepSeek) sometimes emits tool-call XML-like blocks in its text
+// output even though it has no tool execution capability. These look like:
+//   <｜DSML｜function_calls>...<｜DSML｜invoke name="query_database">...
+// Strip them so only the analysis prose is shown, not dangling SQL.
+
+function cleanEngineContent(text: string): string {
+  // Remove DeepSeek DSML function call blocks (with or without surrounding whitespace)
+  let cleaned = text.replace(/<｜DSML｜function_calls>[\s\S]*?<\/｜DSML｜function_calls>/g, '');
+  // Remove any unclosed / partial DSML tags that might remain
+  cleaned = cleaned.replace(/<｜DSML｜[\s\S]*?>/g, '');
+  // Remove generic XML-style tool call blocks other models may emit
+  cleaned = cleaned.replace(/<function_calls>[\s\S]*?<\/function_calls>/g, '');
+  cleaned = cleaned.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '');
+  // Remove OpenAI-style tool call JSON blocks that leaked into text
+  cleaned = cleaned.replace(/```tool_call[\s\S]*?```/g, '');
+  // Collapse multiple blank lines left behind
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
+  return cleaned;
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 interface Message {
@@ -409,8 +430,9 @@ export default function AgentWidget() {
                 m.id === sId ? { ...m, content: m.content + event.token } : m
               ));
             } else if (event.type === 'done') {
+              // Strip any tool-call artifacts DeepSeek may have emitted in its text
               setE2Messages(prev => prev.map(m =>
-                m.id === sId ? { ...m, isStreaming: false } : m
+                m.id === sId ? { ...m, isStreaming: false, content: cleanEngineContent(m.content) } : m
               ));
             } else if (event.type === 'error') {
               setE2Messages(prev => prev.map(m =>
@@ -491,8 +513,9 @@ export default function AgentWidget() {
                 m.id === sId ? { ...m, content: m.content + event.token } : m
               ));
             } else if (event.type === 'done') {
+              // Strip any tool-call artifacts that may have leaked into the text
               setE3Messages(prev => prev.map(m =>
-                m.id === sId ? { ...m, isStreaming: false } : m
+                m.id === sId ? { ...m, isStreaming: false, content: cleanEngineContent(m.content) } : m
               ));
             } else if (event.type === 'error') {
               setE3Messages(prev => prev.map(m =>
