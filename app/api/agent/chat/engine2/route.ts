@@ -140,25 +140,66 @@ export async function POST(request: NextRequest) {
     ? `\n\nThe following LIVE WEB RESEARCH data was retrieved for this query. Use it to enrich your analysis with current market context:\n\n${webSearchResults}`
     : '';
 
-  const engineInstruction = `You are Thinking Engine 2, an independent AI analyst. You have access to the same tools as Engine 1 and should use them to independently fetch and verify data. Provide your own analysis — explore angles Engine 1 may have missed, cross-check numbers, and offer a different perspective. Do NOT mention your model name. Use the same formatting rules (charts via \`\`\`chart blocks, bullets, bold) as described in the system prompt.
+  const engineInstruction = `You are Thinking Engine 2, an independent AI analyst. You have access to the same tools as Engine 1 and should use them to independently fetch and verify data. Provide your own analysis — explore angles Engine 1 may have missed, cross-check numbers, and offer a different perspective. Do NOT mention your model name.
 
-⚠️ CRITICAL DATABASE RULES — FOLLOW EXACTLY OR QUERIES WILL FAIL:
+## MANDATORY OUTPUT RULE — CHARTS
+After fetching ANY data with 3 or more rows, you MUST output a chart block. No exceptions. Charts use this EXACT format — a fenced block with the word "chart", containing a SINGLE-LINE JSON object:
 
-1. COLUMN NAME: The employee tenure/joining date column is called \`date_joined\` (NOT hire_date, NOT join_date, NOT joining_date). Always use \`date_joined\` for any tenure, vintage, or joining-date analysis.
-
-2. CHART FORMAT: Charts MUST use this exact format with a single-line JSON:
 \`\`\`chart
-{"type":"bar","title":"Title Here","xKey":"field_name","yKey":"value_field","data":[{"field_name":"Label","value_field":123}]}
+{"type":"bar","title":"My Chart Title","xKey":"name","yKey":"total_cr","data":[{"name":"Alpha","total_cr":12.3},{"name":"Beta","total_cr":8.7},{"name":"Gamma","total_cr":5.1}]}
 \`\`\`
-Do NOT use Chart.js format (labels/datasets arrays). The xKey and yKey must match exact keys in the data objects. The data must be a flat array of objects, NOT nested.
 
-3. NAMES NOT IDs: Never show raw employee IDs (W1234) in responses. Always JOIN with the employees table to get full_name, or use get_rankings/get_team_performance tools that already resolve names.
+Rules:
+- type: "bar" (rankings/categories) | "line" (trends over time) | "area" (volume trends) | "pie" (share/composition)
+- xKey and yKey must EXACTLY match keys used in the data objects
+- data must be a flat array of objects — each object has simple key:value pairs (strings and numbers only)
+- DO NOT use Chart.js format (no "labels" array, no "datasets" array, no "backgroundColor") — that format is invalid here
+- The JSON must be on ONE LINE inside the code fence — no newlines within the JSON
 
-4. LARGE TABLES: When analysing employees (1100+ rows), ALWAYS use COUNT/GROUP BY aggregation queries — never SELECT * or fetch raw rows. Use LIMIT only on aggregated results, not on the input data before aggregation.
+After every chart block, add a rawdata block with the full query result (used for Excel export):
+\`\`\`rawdata
+[{"col1":"val","col2":123}]
+\`\`\`
 
-5. EMPLOYMENT STATUS: Filter active employees with \`WHERE employment_status = 'Working'\` (NOT 'Active').
+## CRITICAL DATABASE RULES
 
-6. B2B SALES: Columns like "Total Net Sales (COB 100%)" are stored as TEXT — always cast: \`NULLIF("Total Net Sales (COB 100%)", '')::numeric\`. Always GROUP BY "RM Emp ID" and SUM — never use single-row lookups on B2B tables.${webSearchBlock}`;
+**1. Employee tenure column:** Always use \`date_joined\` — NOT hire_date, NOT join_date, NOT joining_date.
+
+**2. Employee table — aggregation required:** The employees table has 1100+ rows. NEVER do SELECT * or fetch raw rows. ALWAYS use GROUP BY + COUNT/SUM/AVG to aggregate. Example for department breakdown:
+\`\`\`sql
+SELECT department, COUNT(*) as headcount
+FROM employees
+WHERE employment_status = 'Working'
+GROUP BY department
+ORDER BY headcount DESC
+LIMIT 50
+\`\`\`
+Example for vintage/tenure breakdown:
+\`\`\`sql
+SELECT
+  CASE
+    WHEN date_joined >= CURRENT_DATE - INTERVAL '1 year' THEN '0-1 yr'
+    WHEN date_joined >= CURRENT_DATE - INTERVAL '3 years' THEN '1-3 yrs'
+    WHEN date_joined >= CURRENT_DATE - INTERVAL '5 years' THEN '3-5 yrs'
+    ELSE '5+ yrs'
+  END as tenure_band,
+  COUNT(*) as headcount
+FROM employees
+WHERE employment_status = 'Working' AND date_joined IS NOT NULL
+GROUP BY tenure_band
+ORDER BY headcount DESC
+LIMIT 10
+\`\`\`
+
+**3. Names not IDs:** Never display raw W-prefixed IDs in the response. Always JOIN employees table to get full_name:
+\`\`\`sql
+JOIN employees e ON e.employee_number = b."RM Emp ID"
+\`\`\`
+Or use get_rankings / get_team_performance tools which resolve names automatically.
+
+**4. Employment status:** Filter active employees with \`WHERE employment_status = 'Working'\` (NOT 'Active').
+
+**5. B2B sales text cast:** "Total Net Sales (COB 100%)" and other B2B columns are stored as TEXT. Always cast: \`NULLIF("Total Net Sales (COB 100%)", '')::numeric\`. Always GROUP BY "RM Emp ID" and SUM.${webSearchBlock}`;
 
   // Build initial messages: system prompt + engine instruction + prior conversation context + new user message
   let currentMessages: any[] = [
@@ -183,7 +224,7 @@ Do NOT use Chart.js format (labels/datasets arrays). The xKey and yKey must matc
           tools:       availableTools.length > 0 ? availableTools : undefined,
           tool_choice: availableTools.length > 0 ? 'auto' : undefined,
           temperature: 0.7,
-          max_tokens:  1500,
+          max_tokens:  4000,
           stream:      false,
         }),
       });
@@ -261,7 +302,7 @@ Do NOT use Chart.js format (labels/datasets arrays). The xKey and yKey must matc
             messages:    currentMessages,
             tool_choice: 'none',
             temperature: 0.7,
-            max_tokens:  1500,
+            max_tokens:  4000,
             stream:      true,
           }),
         });
