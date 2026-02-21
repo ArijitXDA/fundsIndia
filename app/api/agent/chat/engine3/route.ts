@@ -77,12 +77,16 @@ export async function POST(request: NextRequest) {
       }),
     });
   } catch (err: any) {
-    return engineUnavailable(`Thinking Engine 3 connection failed: ${err.message}`);
+    return engineUnavailable('Thinking Engine 3 could not connect. It will be available shortly.');
   }
 
   if (!grokRes.ok) {
-    const errText = await grokRes.text().catch(() => 'unknown error');
-    return engineUnavailable(`Thinking Engine 3 error (${grokRes.status}): ${errText.slice(0, 200)}`);
+    const friendlyMsg = grokRes.status === 401 || grokRes.status === 400
+      ? 'Thinking Engine 3 is not authorised — please check the GROK_API_KEY in Vercel. Grok keys start with "xai-".'
+      : grokRes.status === 402
+      ? 'Thinking Engine 3 is temporarily unavailable (insufficient credits).'
+      : `Thinking Engine 3 is temporarily unavailable (status ${grokRes.status}).`;
+    return engineUnavailable(friendlyMsg);
   }
 
   // Pipe SSE from Grok → client using same token/done/error format

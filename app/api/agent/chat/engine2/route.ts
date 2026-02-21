@@ -79,12 +79,16 @@ export async function POST(request: NextRequest) {
       }),
     });
   } catch (err: any) {
-    return engineUnavailable(`Thinking Engine 2 connection failed: ${err.message}`);
+    return engineUnavailable('Thinking Engine 2 could not connect. It will be available shortly.');
   }
 
   if (!deepseekRes.ok) {
-    const errText = await deepseekRes.text().catch(() => 'unknown error');
-    return engineUnavailable(`Thinking Engine 2 error (${deepseekRes.status}): ${errText.slice(0, 200)}`);
+    const friendlyMsg = deepseekRes.status === 402
+      ? 'Thinking Engine 2 is temporarily unavailable (insufficient credits). Please top up the DeepSeek account.'
+      : deepseekRes.status === 401
+      ? 'Thinking Engine 2 is not authorised — please check the DEEPSEEK_API_KEY in Vercel.'
+      : `Thinking Engine 2 is temporarily unavailable (status ${deepseekRes.status}).`;
+    return engineUnavailable(friendlyMsg);
   }
 
   // Pipe SSE from DeepSeek → client using same token/done/error format
