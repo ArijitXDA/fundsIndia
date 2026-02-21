@@ -199,36 +199,26 @@ export async function POST(request: NextRequest) {
     round++;
   }
 
-  // If we exhausted rounds without a text response, ask for a final summary
-  if (finalText === null) {
-    try {
-      const finalRes = await fetch(DEEPSEEK_API, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model:       DEEPSEEK_MODEL,
-          messages:    currentMessages,
-          tool_choice: 'none',
-          temperature: 0.7,
-          max_tokens:  1500,
-          stream:      false,
-        }),
-      });
-      const fc = await finalRes.json();
-      finalText = fc.choices?.[0]?.message?.content ?? '';
-    } catch {
-      finalText = 'Thinking Engine 2 was unable to complete the analysis.';
-    }
-  }
-
-  // ── Stream the final text token-by-token ──────────────────────────────────
+  // ── Stream the response ───────────────────────────────────────────────────
+  // If finalText was already collected during the tool loop (the model returned
+  // a text response mid-loop), stream it directly — do NOT make another API call,
+  // which would cause DeepSeek to ignore its own tool results and say "let me check…"
   const { readable, writable } = new TransformStream();
   const writer  = writable.getWriter();
   const encoder = new TextEncoder();
 
   (async () => {
     try {
-      // Now stream the final answer from DeepSeek
+      if (finalText !== null) {
+        // Already have the answer — stream it char-by-char, no extra API call needed
+        await streamTextFallback(writer, encoder, finalText);
+        await writer.write(encoder.encode(sseDone()));
+        await writer.close();
+        return;
+      }
+
+      // Tool rounds exhausted without a text response — ask DeepSeek to summarise
+      // what it found, with tool_choice: 'none' to force a text answer
       let streamRes: Response;
       try {
         streamRes = await fetch(DEEPSEEK_API, {
@@ -244,15 +234,14 @@ export async function POST(request: NextRequest) {
           }),
         });
       } catch {
-        // Fall back to emitting the already-collected finalText char-by-char
-        await streamTextFallback(writer, encoder, finalText ?? '');
+        await writer.write(encoder.encode(sseToken('⚠️ Thinking Engine 2 could not complete the analysis.')));
         await writer.write(encoder.encode(sseDone()));
         await writer.close();
         return;
       }
 
       if (!streamRes.ok || !streamRes.body) {
-        await streamTextFallback(writer, encoder, finalText ?? '');
+        await writer.write(encoder.encode(sseToken('⚠️ Thinking Engine 2 is temporarily unavailable.')));
         await writer.write(encoder.encode(sseDone()));
         await writer.close();
         return;

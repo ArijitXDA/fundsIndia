@@ -198,35 +198,25 @@ export async function POST(request: NextRequest) {
     round++;
   }
 
-  // If we exhausted rounds without a text response, force a final summary
-  if (finalText === null) {
-    try {
-      const finalRes = await fetch(GROK_API, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model:       GROK_MODEL,
-          messages:    currentMessages,
-          tool_choice: 'none',
-          temperature: 0.7,
-          max_tokens:  1500,
-          stream:      false,
-        }),
-      });
-      const fc = await finalRes.json();
-      finalText = fc.choices?.[0]?.message?.content ?? '';
-    } catch {
-      finalText = 'Thinking Engine 3 was unable to complete the analysis.';
-    }
-  }
-
-  // ── Stream the final text ─────────────────────────────────────────────────
+  // ── Stream the response ───────────────────────────────────────────────────
+  // If finalText was already collected during the tool loop (the model returned
+  // a text response mid-loop), stream it directly — do NOT make another API call,
+  // which would cause the model to ignore its own tool results.
   const { readable, writable } = new TransformStream();
   const writer  = writable.getWriter();
   const encoder = new TextEncoder();
 
   (async () => {
     try {
+      if (finalText !== null) {
+        // Already have the answer — stream it char-by-char, no extra API call needed
+        await streamTextFallback(writer, encoder, finalText);
+        await writer.write(encoder.encode(sseDone()));
+        await writer.close();
+        return;
+      }
+
+      // Tool rounds exhausted — ask Grok to synthesise what it found
       let streamRes: Response;
       try {
         streamRes = await fetch(GROK_API, {
@@ -242,14 +232,14 @@ export async function POST(request: NextRequest) {
           }),
         });
       } catch {
-        await streamTextFallback(writer, encoder, finalText ?? '');
+        await writer.write(encoder.encode(sseToken('⚠️ Thinking Engine 3 could not complete the analysis.')));
         await writer.write(encoder.encode(sseDone()));
         await writer.close();
         return;
       }
 
       if (!streamRes.ok || !streamRes.body) {
-        await streamTextFallback(writer, encoder, finalText ?? '');
+        await writer.write(encoder.encode(sseToken('⚠️ Thinking Engine 3 is temporarily unavailable.')));
         await writer.write(encoder.encode(sseDone()));
         await writer.close();
         return;
