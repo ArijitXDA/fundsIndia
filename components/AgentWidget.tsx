@@ -337,6 +337,11 @@ export default function AgentWidget() {
         signal:  ctrl.signal,
       });
 
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error ?? `Engine 2 error ${res.status}`);
+      }
+
       const reader  = res.body!.getReader();
       const decoder = new TextDecoder();
       let   buffer  = '';
@@ -409,6 +414,11 @@ export default function AgentWidget() {
         body:    JSON.stringify({ messages: messages2Fire, systemPrompt: systemPromptText, userMessage: userText }),
         signal:  ctrl.signal,
       });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error ?? `Engine 3 error ${res.status}`);
+      }
 
       const reader  = res.body!.getReader();
       const decoder = new TextDecoder();

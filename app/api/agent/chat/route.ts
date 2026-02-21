@@ -325,8 +325,10 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // Stream the already-collected text token-by-token
-      return streamTextResponse(finalText, convId, dataSources, totalTokensUsed);
+      // Stream the already-collected text token-by-token.
+      // Pass the full message history so engines 2 & 3 get tool results too.
+      const messagesForEnginesFast = currentMessages.filter((m: any) => m.role !== 'system');
+      return streamTextResponse(finalText, convId, dataSources, totalTokensUsed, messagesForEnginesFast, systemPrompt);
     }
 
     // Execute all tool calls in this round
@@ -570,7 +572,9 @@ function streamTextResponse(
   text: string,
   convId: string | null,
   dataSources: string[],
-  tokensUsed: number
+  tokensUsed: number,
+  toolResultsForEngines: any[] = [],
+  systemPrompt: string = ''
 ): Response {
   const { readable, writable } = new TransformStream();
   const writer = writable.getWriter();
@@ -588,6 +592,8 @@ function streamTextResponse(
       conversationId: convId,
       dataSources: [...new Set(dataSources)],
       tokensUsed,
+      toolResultsForEngines,
+      systemPrompt,
     })));
     writer.close();
   })();

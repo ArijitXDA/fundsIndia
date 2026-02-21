@@ -4,8 +4,7 @@
 // No tool calls — pure language model analysis on the shared data context.
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient }        from '@supabase/ssr';
-import { cookies }                   from 'next/headers';
+import { supabaseAdmin }             from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,16 +12,22 @@ const DEEPSEEK_API  = 'https://api.deepseek.com/v1/chat/completions';
 const DEEPSEEK_MODEL = 'deepseek-chat'; // deepseek-chat = DeepSeek-V3
 
 export async function POST(request: NextRequest) {
-  // Auth check
-  const cookieStore = cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { get: (n: string) => cookieStore.get(n)?.value } }
-  );
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // Auth check — same custom session cookie used by the rest of the app
+  const sessionCookie = request.cookies.get('session');
+  if (!sessionCookie) {
+    return engineUnavailable('Not authenticated');
+  }
+  let sessionData: any;
+  try {
+    sessionData = JSON.parse(sessionCookie.value);
+  } catch {
+    return engineUnavailable('Invalid session');
+  }
+  const { userId } = sessionData;
+  const { data: user } = await supabaseAdmin
+    .from('users').select('id').eq('id', userId).single();
+  if (!user) {
+    return engineUnavailable('User not found');
   }
 
   const apiKey = process.env.DEEPSEEK_API_KEY;

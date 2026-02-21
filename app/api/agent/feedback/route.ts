@@ -3,8 +3,6 @@
 // so future responses reflect the user's preferences.
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient }        from '@supabase/ssr';
-import { cookies }                   from 'next/headers';
 import { supabaseAdmin }             from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
@@ -14,16 +12,24 @@ const MEMORY_KEY_POSITIVE = 'response_style_positive';
 const MEMORY_KEY_NEGATIVE = 'response_style_feedback';
 
 export async function POST(request: NextRequest) {
-  // Auth check
-  const cookieStore = cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { get: (n: string) => cookieStore.get(n)?.value } }
-  );
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) {
+  // Auth check — same custom session cookie used by the rest of the app
+  const sessionCookie = request.cookies.get('session');
+  if (!sessionCookie) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  let sessionData: any;
+  try {
+    sessionData = JSON.parse(sessionCookie.value);
+  } catch {
+    return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
+  }
+  const { userId, employeeId: sessionEmployeeId } = sessionData;
+
+  // Resolve employee
+  const { data: user } = await supabaseAdmin
+    .from('users').select('id, employee_id').eq('id', userId).single();
+  if (!user) {
+    return NextResponse.json({ error: 'User not found' }, { status: 401 });
   }
 
   let body: { messageId: string; engine: string; rating: 'up' | 'down'; messageContent?: string };
@@ -44,11 +50,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'engine must be engine1, engine2, or engine3' }, { status: 400 });
   }
 
-  // Resolve employee record from auth user
+  // Resolve employee from DB (prefer DB, fall back to session)
+  const resolvedEmployeeId = user.employee_id ?? sessionEmployeeId ?? null;
+  if (!resolvedEmployeeId) {
+    return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+  }
   const { data: emp } = await supabaseAdmin
     .from('employees')
     .select('id')
-    .eq('work_email', session.user.email)
+    .eq('id', resolvedEmployeeId)
     .single();
 
   if (!emp) {
