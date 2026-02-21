@@ -10,21 +10,28 @@
 --   4. Supabase RPC functions for similarity search (callable from service_role)
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- Ensure pgvector is enabled (run this manually in Supabase SQL editor if needed)
-CREATE EXTENSION IF NOT EXISTS vector;
+-- Ensure pgvector is enabled in the extensions schema (Supabase default)
+-- NOTE: Supabase installs pgvector into the 'extensions' schema, not 'public'.
+-- The CREATE EXTENSION line is idempotent; safe to re-run.
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions;
+
+-- Make the vector type and operators visible from the public schema
+-- by adding extensions to the default search_path for the database.
+-- This is the standard Supabase fix for the "operator does not exist" error.
+ALTER DATABASE postgres SET search_path TO public, extensions;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1. Semantic memory: add embedding column to agent_memory
 -- ─────────────────────────────────────────────────────────────────────────────
 
 ALTER TABLE agent_memory
-  ADD COLUMN IF NOT EXISTS embedding vector(1536);
+  ADD COLUMN IF NOT EXISTS embedding extensions.vector(1536);
 
 -- IVFFlat index for cosine similarity on memory embeddings
 -- lists=50 is appropriate for < 100k rows; increase to 100 if memory table grows large
 CREATE INDEX IF NOT EXISTS agent_memory_embedding_idx
   ON agent_memory
-  USING ivfflat (embedding vector_cosine_ops)
+  USING ivfflat (embedding extensions.vector_cosine_ops)
   WITH (lists = 50);
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -38,7 +45,7 @@ CREATE TABLE IF NOT EXISTS agent_knowledge_base (
   category     text        NOT NULL DEFAULT 'general' -- product | policy | faq | contest | general
     CHECK (category IN ('product', 'policy', 'faq', 'contest', 'general')),
   source       text,                                  -- source doc/URL for traceability
-  embedding    vector(1536),                          -- OpenAI text-embedding-3-small
+  embedding    extensions.vector(1536),               -- OpenAI text-embedding-3-small
   is_active    boolean     NOT NULL DEFAULT true,
   created_at   timestamptz NOT NULL DEFAULT now(),
   updated_at   timestamptz NOT NULL DEFAULT now()
@@ -58,7 +65,7 @@ CREATE TRIGGER trg_kb_updated_at
 -- IVFFlat index for fast cosine search on knowledge base
 CREATE INDEX IF NOT EXISTS agent_knowledge_base_embedding_idx
   ON agent_knowledge_base
-  USING ivfflat (embedding vector_cosine_ops)
+  USING ivfflat (embedding extensions.vector_cosine_ops)
   WITH (lists = 50);
 
 -- Index for category filtering
@@ -73,7 +80,7 @@ CREATE INDEX IF NOT EXISTS agent_knowledge_base_category_idx
 
 CREATE OR REPLACE FUNCTION search_agent_memory(
   p_employee_id uuid,
-  p_query_embedding vector(1536),
+  p_query_embedding extensions.vector(1536),
   p_limit int DEFAULT 8,
   p_min_similarity float DEFAULT 0.25
 )
@@ -86,7 +93,7 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
   SELECT
     key,
@@ -109,7 +116,7 @@ $$;
 -- ─────────────────────────────────────────────────────────────────────────────
 
 CREATE OR REPLACE FUNCTION search_knowledge_base(
-  p_query_embedding vector(1536),
+  p_query_embedding extensions.vector(1536),
   p_limit int DEFAULT 5,
   p_min_similarity float DEFAULT 0.30,
   p_category text DEFAULT NULL
@@ -125,7 +132,7 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
   SELECT
     id,
@@ -236,5 +243,5 @@ ON CONFLICT DO NOTHING;
 
 -- Grant service_role access to new table and functions
 GRANT SELECT, INSERT, UPDATE ON agent_knowledge_base TO service_role;
-GRANT EXECUTE ON FUNCTION search_agent_memory TO service_role;
-GRANT EXECUTE ON FUNCTION search_knowledge_base TO service_role;
+GRANT EXECUTE ON FUNCTION search_agent_memory(uuid, extensions.vector, int, float) TO service_role;
+GRANT EXECUTE ON FUNCTION search_knowledge_base(extensions.vector, int, float, text) TO service_role;
