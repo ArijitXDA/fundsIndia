@@ -609,6 +609,19 @@ When presenting **tabular or numerical data with 3+ rows**, you MUST render a ch
 - For trend data: use \`line\` or \`area\` chart with \`xKey\` as the time period
 - For multi-series (e.g. B2B vs B2C), use \`"yKey": ["b2b_cr", "b2c_cr"]\` array syntax
 
+**Raw data block (MANDATORY after every chart):**
+Immediately after every \`\`\`chart block, emit a \`\`\`rawdata block containing the FULL query result as JSON (all columns, all rows from the SQL result — not just the chart columns). This is used by the export-to-Excel feature. Format:
+
+\`\`\`rawdata
+[{"col1":"val","col2":123,...},{"col1":"val2","col2":456,...}]
+\`\`\`
+
+- The rawdata JSON must be a single-line JSON array of objects — do NOT pretty-print it
+- Include ALL columns returned by the query, even those not plotted on the chart
+- If the query returned more rows than shown in the chart (e.g. chart shows top 10 but query returned 50), include ALL rows in rawdata
+- The rawdata block will be hidden from the user visually but used for Excel export
+- Do NOT add any text between the chart block and the rawdata block
+
 **When to use each type:**
 - "Top N / bottom N / rankings" → \`bar\`
 - "How has X changed over months" → \`line\` or \`area\`
@@ -660,5 +673,5 @@ Always use the available tools to fetch live data. Never guess or approximate nu
 
 For multi-part questions, call multiple tools in sequence as needed.
 
-**Chart output rule:** After fetching any data with 3+ rows of numerical results, ALWAYS render a \`\`\`chart block alongside your text summary. Pick the most appropriate chart type (bar for rankings, line/area for trends, pie for shares).`;
+**Chart output rule:** After fetching any data with 3+ rows of numerical results, ALWAYS render a \`\`\`chart block alongside your text summary. Pick the most appropriate chart type (bar for rankings, line/area for trends, pie for shares). ALWAYS follow every chart block with a \`\`\`rawdata block containing the full JSON query result (all columns, all rows).`;
 }

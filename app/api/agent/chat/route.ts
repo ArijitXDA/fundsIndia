@@ -484,11 +484,21 @@ export async function POST(request: NextRequest) {
         dataSources, totalTokensUsed, model, existingMessages,
       }).catch(console.error);
 
+      // Build engine context for engines 2 & 3:
+      // Strip the system message (index 0) — engines get their own system prompt.
+      // Include all user + assistant + tool result messages so engines have full data context.
+      const messagesForEngines = currentMessages.filter(
+        (m: any) => m.role !== 'system'
+      );
+
       writer.write(enc.encode(sseEvent({
         type: 'done',
         conversationId: convId,
         dataSources: [...new Set(dataSources)],
         tokensUsed: totalTokensUsed,
+        // Engines 2 & 3 receive these to generate their independent analyses
+        toolResultsForEngines: messagesForEngines,
+        systemPrompt,
       })));
       writer.close();
     }
