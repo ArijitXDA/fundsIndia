@@ -16,6 +16,12 @@ export interface QueryDbConfig {
   blocked_columns?:  Record<string, string[]>;
 }
 
+export interface KnowledgeContextItem {
+  title:   string;
+  content: string;
+  category: string;
+}
+
 export interface SystemPromptConfig {
   agentName: string;
   employee: {
@@ -47,6 +53,7 @@ export interface SystemPromptConfig {
   };
   queryDbConfig?: QueryDbConfig | null;
   memory?: MemoryItem[];
+  knowledgeContext?: KnowledgeContextItem[]; // pre-fetched KB chunks injected server-side
 }
 
 export interface MemoryItem {
@@ -95,6 +102,7 @@ export function buildSystemPrompt(config: SystemPromptConfig): string {
     buildQueryDatabaseBlock(config),
     buildPersonaBehaviourBlock(config),
     buildMemoryBlock(config.memory),
+    buildKnowledgeContextBlock(config.knowledgeContext),
     buildClosingBlock(),
   ].filter(Boolean).join('\n\n');
 }
@@ -644,6 +652,25 @@ ${lines}
 Use this context to personalise your responses where relevant. Don't repeat it back verbatim unless asked.`;
 }
 
+// ── Layer 5b: Knowledge Context (pre-fetched RAG chunks) ─────────────────────
+// Injected when the server-side route pre-fetches relevant KB chunks via pgvector
+// before the first LLM call — saves a tool-call round-trip for knowledge queries.
+
+function buildKnowledgeContextBlock(items?: KnowledgeContextItem[]): string {
+  if (!items || items.length === 0) return '';
+
+  const chunks = items.map((item, i) =>
+    `### ${i + 1}. ${item.title} [${item.category}]\n${item.content}`
+  ).join('\n\n');
+
+  return `## Relevant Knowledge Base Context
+The following information was retrieved from FundsIndia's internal knowledge base because it may be relevant to the user's question. Use it to answer product, policy, or regulatory questions accurately — do NOT fabricate or contradict this:
+
+${chunks}
+
+If the knowledge base context answers the user's question completely, you may answer directly without calling search_knowledge_base again.`;
+}
+
 // ── Closing ───────────────────────────────────────────────────────────────────
 
 function buildClosingBlock(): string {
@@ -651,6 +678,7 @@ function buildClosingBlock(): string {
 Always use the available tools to fetch live data. Never guess or approximate numbers from memory.
 
 **Specific tool selection rules:**
+- Use **search_knowledge_base** for product definitions, regulations, policy questions, metric explanations (MTD/YTD/AUM/trail/COB/ARN/KYC/ELSS/SIP etc.) — use this BEFORE answering from general knowledge
 - Use **get_my_performance** for the current user's own numbers
 - Use **get_team_performance** for the user's direct/downstream team breakdown
 - Use **get_rankings** for leaderboards (top N, bottom N, by zone)

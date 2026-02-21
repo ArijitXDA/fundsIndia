@@ -12,9 +12,10 @@
 //   data: {"type":"error","message":"..."}
 
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { supabaseAdmin }               from '@/lib/supabase';
 import { AGENT_TOOLS, executeTool, ToolContext } from '@/lib/agent/tools';
-import { buildSystemPrompt } from '@/lib/agent/system-prompt';
+import { buildSystemPrompt }           from '@/lib/agent/system-prompt';
+import { getSemanticMemories, searchKnowledgeBase } from '@/lib/agent/embeddings';
 
 export const dynamic = 'force-dynamic';
 
@@ -166,20 +167,47 @@ export async function POST(request: NextRequest) {
     }));
   }
 
-  // 5. Fetch user memory
-  const { data: rawMemoryRows } = await supabaseAdmin
-    .from('agent_memory')
-    .select('key, value, memory_type')
-    .eq('employee_id', employee.id)
-    .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
-    .order('created_at', { ascending: false })
-    .limit(10);
+  // 5. Fetch user memory — semantic search (pgvector) with recency fallback
+  // Run memory search and KB pre-fetch in parallel for zero extra latency.
+  const userQuery = message ?? '';
 
-  const memoryRows = (rawMemoryRows ?? []).map(m => ({
-    memory_key: m.key,
-    memory_value: m.value,
-    memory_type: m.memory_type,
-  }));
+  const [semanticMemories, kbChunks] = await Promise.all([
+    // 5a. Semantic memory: find memories most relevant to this specific question
+    getSemanticMemories(employee.id, userQuery, 8).catch(() => []),
+
+    // 5b. Knowledge base pre-fetch: pull relevant KB chunks before the LLM call
+    // so the model has grounded context without needing an extra tool-call round.
+    // Only run when user message is present (skip for proactive triggers).
+    userQuery.length > 10
+      ? searchKnowledgeBase(userQuery, 3).catch(() => [])
+      : Promise.resolve([]),
+  ]);
+
+  let memoryRows: { memory_key: string; memory_value: string; memory_type: string }[];
+
+  if (semanticMemories.length > 0) {
+    // Semantic results available — use them (already sorted by relevance)
+    memoryRows = semanticMemories.map(m => ({
+      memory_key:   m.memory_key,
+      memory_value: m.memory_value,
+      memory_type:  m.memory_type,
+    }));
+  } else {
+    // Fallback: pgvector not yet warmed up (no embeddings yet) → recency-based
+    const { data: rawMemoryRows } = await supabaseAdmin
+      .from('agent_memory')
+      .select('key, value, memory_type')
+      .eq('employee_id', employee.id)
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    memoryRows = (rawMemoryRows ?? []).map(m => ({
+      memory_key:   m.key,
+      memory_value: m.value,
+      memory_type:  m.memory_type,
+    }));
+  }
 
   // 6. Build system prompt (+ optional live web search injection)
   let systemPrompt = buildSystemPrompt({
@@ -213,6 +241,10 @@ export async function POST(request: NextRequest) {
     },
     queryDbConfig: (access.query_db_config as any) ?? null,
     memory: memoryRows ?? [],
+    // Pre-fetched knowledge base chunks (pgvector RAG) — injected before first LLM call
+    knowledgeContext: kbChunks.length > 0
+      ? kbChunks.map(c => ({ title: c.title, content: c.content, category: c.category }))
+      : undefined,
   });
 
   // Append live web search results to system prompt if provided

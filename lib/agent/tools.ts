@@ -9,7 +9,8 @@
 // B2C table is named "b2c" and uses bracketed column names.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { supabaseAdmin } from '@/lib/supabase';
+import { supabaseAdmin }         from '@/lib/supabase';
+import { searchKnowledgeBase, backfillMemoryEmbedding } from '@/lib/agent/embeddings';
 
 // ── Row-scope helper ──────────────────────────────────────────────────────────
 
@@ -347,6 +348,34 @@ Rules:
   {
     type: 'function' as const,
     function: {
+      name: 'search_knowledge_base',
+      description: `Search the internal knowledge base for answers about FundsIndia products, mutual fund concepts, regulations, commission structures, and internal policies. Use this BEFORE answering any question about:
+- Mutual fund product types (ELSS, SIP, lumpsum, AIF, PMS, LAS, COB, trail commission)
+- Regulatory/compliance questions (SEBI, AMFI, ARN, KYC, certifications)
+- How FundsIndia performance metrics are calculated (MTD, YTD, AUM, net inflow)
+- Contest or incentive structures
+- Any policy or process question you are uncertain about
+Do NOT use this for live performance data queries — use the data tools for that.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'The question or topic to search for in the knowledge base.',
+          },
+          category: {
+            type: 'string',
+            enum: ['product', 'policy', 'faq', 'contest', 'general'],
+            description: 'Optional: filter to a specific knowledge category.',
+          },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'save_memory',
       description: 'Persist a piece of information about the user to memory so it can be recalled in future sessions. Use this when the user shares preferences, goals, context, or anything worth remembering long-term. Examples: preferred reporting format, personal targets, noted concerns, focus areas.',
       parameters: {
@@ -431,6 +460,9 @@ export async function executeTool(
 
     case 'get_company_summary':
       return await toolGetCompanySummary(args, ctx);
+
+    case 'search_knowledge_base':
+      return await toolSearchKnowledgeBase(args, ctx);
 
     case 'save_memory':
       return await toolSaveMemory(args, ctx);
@@ -1200,6 +1232,35 @@ async function toolGetCompanySummary(args: any, ctx: ToolContext) {
   return result;
 }
 
+// ── Tool: search_knowledge_base ───────────────────────────────────────────────
+
+async function toolSearchKnowledgeBase(args: any, _ctx: ToolContext) {
+  const query    = String(args.query ?? '').trim();
+  const category = args.category ? String(args.category) : undefined;
+
+  if (!query) return { error: 'query is required' };
+
+  const results = await searchKnowledgeBase(query, 4, category);
+
+  if (results.length === 0) {
+    return {
+      found: false,
+      message: 'No relevant knowledge base entries found for this query. Please answer from general knowledge or note the limitation.',
+    };
+  }
+
+  return {
+    found: true,
+    results: results.map(r => ({
+      title:      r.title,
+      content:    r.content,
+      category:   r.category,
+      source:     r.source,
+      similarity: parseFloat(r.similarity.toFixed(3)),
+    })),
+  };
+}
+
 // ── Tool: save_memory ─────────────────────────────────────────────────────────
 
 async function toolSaveMemory(args: any, ctx: ToolContext) {
@@ -1233,6 +1294,9 @@ async function toolSaveMemory(args: any, ctx: ToolContext) {
   if (error) {
     return { error: `Failed to save memory: ${error.message}` };
   }
+
+  // Backfill embedding asynchronously — do not await, response goes back immediately
+  backfillMemoryEmbedding(ctx.employeeId, key, `${key}: ${value}`).catch(() => { /* silent */ });
 
   return {
     saved: true,
