@@ -397,7 +397,7 @@ export default function AgentWidget() {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          messages: messages2Fire, systemPrompt: systemPromptText, userMessage: userText,
+          messages: [], systemPrompt: systemPromptText || ' ', userMessage: userText,
           ...(webSearchResults ? { webSearchResults } : {}),
         }),
         signal:  ctrl.signal,
@@ -480,7 +480,7 @@ export default function AgentWidget() {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          messages: messages2Fire, systemPrompt: systemPromptText, userMessage: userText,
+          messages: [], systemPrompt: systemPromptText || ' ', userMessage: userText,
           ...(webSearchResults ? { webSearchResults } : {}),
         }),
         signal:  ctrl.signal,
@@ -589,17 +589,12 @@ export default function AgentWidget() {
       // Wait for all web searches to complete before firing LLMs
       if (searchFetches.length > 0) await Promise.all(searchFetches);
 
-      // ── Engine 1 (always fires) ──────────────────────────────────────────
-      const result = await streamEngine1(text, conversationId, false, e1SearchResults);
-
-      // ── Engines 2 & 3 (popout only, after engine 1 has tool results) ─────
-      if (isPopout && result) {
-        const { toolResultsForEngines, systemPrompt } = result;
-        const parallel: Promise<void>[] = [];
-        if (e2Enabled) parallel.push(streamEngine2(toolResultsForEngines, systemPrompt, text, e2SearchResults));
-        if (e3Enabled) parallel.push(streamEngine3(toolResultsForEngines, systemPrompt, text, e3SearchResults));
-        if (parallel.length > 0) Promise.all(parallel);
-      }
+      // ── All engines fire in parallel — each has its own independent tool loop ──
+      const parallel: Promise<any>[] = [];
+      parallel.push(streamEngine1(text, conversationId, false, e1SearchResults));
+      if (isPopout && e2Enabled) parallel.push(streamEngine2([], '', text, e2SearchResults));
+      if (isPopout && e3Enabled) parallel.push(streamEngine3([], '', text, e3SearchResults));
+      await Promise.all(parallel);
     } catch (err: any) {
       if (err.name !== 'AbortError') {
         setError(err.message ?? 'Something went wrong. Please try again.');
