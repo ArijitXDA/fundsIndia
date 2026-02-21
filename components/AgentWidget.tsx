@@ -245,24 +245,34 @@ export default function AgentWidget() {
     setView('chat');
     setSending(true);
     setMessages([]);
+    setE2Messages([]);
+    setE3Messages([]);
     setConversationId(conv.id);
     setError(null);
     try {
       const res  = await fetch(`/api/agent/chat?conversationId=${conv.id}`);
       const data = await res.json();
       if (res.ok && data.messages) {
-        setMessages(
-          (data.messages as any[])
-            .filter(m => m.role === 'user' || m.role === 'assistant')
-            .map(m => ({
-              id:          m.id,
-              role:        m.role,
-              content:     m.content,
-              createdAt:   new Date(m.created_at),
-              dataSources: m.data_sources_used,
-              isProactive: m.is_proactive,
-            }))
-        );
+        const restored = (data.messages as any[])
+          .filter(m => m.role === 'user' || m.role === 'assistant')
+          .map(m => ({
+            id:          m.id,
+            role:        m.role,
+            content:     m.content,
+            createdAt:   new Date(m.created_at),
+            dataSources: m.data_sources_used,
+            isProactive: m.is_proactive,
+          }));
+        setMessages(restored);
+        // E2/E3 show the same conversation history — user messages + assistant placeholders
+        // so the thread looks continuous when the user asks a follow-up
+        const sharedHistory = restored.map(m => ({
+          ...m,
+          id: `${m.id}-e${m.role === 'user' ? 'u' : '2'}`,
+          engine: m.role === 'assistant' ? ('engine2' as const) : undefined,
+        }));
+        setE2Messages(sharedHistory.map(m => ({ ...m, id: `${m.id}-e2`, engine: m.role === 'assistant' ? 'engine2' as const : undefined })));
+        setE3Messages(sharedHistory.map(m => ({ ...m, id: `${m.id}-e3`, engine: m.role === 'assistant' ? 'engine3' as const : undefined })));
       }
     } catch { setError('Failed to load conversation.'); }
     setSending(false);
@@ -380,7 +390,8 @@ export default function AgentWidget() {
     messages2Fire:    any[],
     systemPromptText: string,
     userText:         string,
-    webSearchResults?: string | null
+    webSearchResults?: string | null,
+    convId?:          string | null,
   ) => {
     abortE2Ref.current?.abort();
     const ctrl = new AbortController();
@@ -398,6 +409,7 @@ export default function AgentWidget() {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
           messages: [], systemPrompt: systemPromptText || ' ', userMessage: userText,
+          ...(convId ? { conversationId: convId } : {}),
           ...(webSearchResults ? { webSearchResults } : {}),
         }),
         signal:  ctrl.signal,
@@ -463,7 +475,8 @@ export default function AgentWidget() {
     messages2Fire:    any[],
     systemPromptText: string,
     userText:         string,
-    webSearchResults?: string | null
+    webSearchResults?: string | null,
+    convId?:          string | null,
   ) => {
     abortE3Ref.current?.abort();
     const ctrl = new AbortController();
@@ -481,6 +494,7 @@ export default function AgentWidget() {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
           messages: [], systemPrompt: systemPromptText || ' ', userMessage: userText,
+          ...(convId ? { conversationId: convId } : {}),
           ...(webSearchResults ? { webSearchResults } : {}),
         }),
         signal:  ctrl.signal,
@@ -592,8 +606,8 @@ export default function AgentWidget() {
       // ── All engines fire in parallel — each has its own independent tool loop ──
       const parallel: Promise<any>[] = [];
       parallel.push(streamEngine1(text, conversationId, false, e1SearchResults));
-      if (isPopout && e2Enabled) parallel.push(streamEngine2([], '', text, e2SearchResults));
-      if (isPopout && e3Enabled) parallel.push(streamEngine3([], '', text, e3SearchResults));
+      if (isPopout && e2Enabled) parallel.push(streamEngine2([], '', text, e2SearchResults, conversationId));
+      if (isPopout && e3Enabled) parallel.push(streamEngine3([], '', text, e3SearchResults, conversationId));
       await Promise.all(parallel);
     } catch (err: any) {
       if (err.name !== 'AbortError') {

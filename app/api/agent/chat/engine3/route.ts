@@ -94,6 +94,7 @@ export async function POST(request: NextRequest) {
     messages:          Array<{ role: string; content: string }>;
     systemPrompt:      string;
     userMessage:       string;
+    conversationId?:   string;
     webSearchResults?: string;
   };
   try {
@@ -102,9 +103,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { messages, systemPrompt, userMessage, webSearchResults } = body;
-  if (!systemPrompt || !userMessage) {
-    return NextResponse.json({ error: 'systemPrompt and userMessage are required' }, { status: 400 });
+  const { messages, systemPrompt, userMessage, conversationId, webSearchResults } = body;
+  if (!userMessage) {
+    return NextResponse.json({ error: 'userMessage is required' }, { status: 400 });
+  }
+
+  // Fetch conversation history if conversationId provided (gives E3 context for follow-ups)
+  let historyMessages: Array<{ role: string; content: string }> = messages ?? [];
+  if (conversationId && historyMessages.length === 0) {
+    const { data: msgs } = await supabaseAdmin
+      .from('agent_messages')
+      .select('role, content')
+      .eq('conversation_id', conversationId)
+      .eq('employee_id', employee.id)
+      .order('created_at', { ascending: false })
+      .limit(6);
+    historyMessages = (msgs ?? []).reverse().map(m => ({ role: m.role, content: m.content }));
   }
 
   // Build tool context
@@ -130,7 +144,7 @@ export async function POST(request: NextRequest) {
   // Build initial messages: system prompt + engine instruction + prior conversation context + new user message
   let currentMessages: any[] = [
     { role: 'system', content: `${systemPrompt}\n\n${engineInstruction}` },
-    ...(messages ?? []),
+    ...historyMessages,
     { role: 'user', content: userMessage },
   ];
 
