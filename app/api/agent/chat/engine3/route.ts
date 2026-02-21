@@ -36,9 +36,10 @@ export async function POST(request: NextRequest) {
   }
 
   let body: {
-    messages:     Array<{ role: string; content: string }>;
-    systemPrompt: string;
-    userMessage:  string;
+    messages:         Array<{ role: string; content: string }>;
+    systemPrompt:     string;
+    userMessage:      string;
+    webSearchResults?: string; // optional live web research block
   };
   try {
     body = await request.json();
@@ -46,13 +47,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { messages, systemPrompt } = body;
+  const { messages, systemPrompt, webSearchResults } = body;
   if (!messages || !systemPrompt) {
     return NextResponse.json({ error: 'messages and systemPrompt are required' }, { status: 400 });
   }
 
   // Engine 3 specific instruction
-  const engineInstruction = `You are Thinking Engine 3, an independent AI analyst. You have been given the same data context as other thinking engines. Provide your own independent analysis, insights, and perspective — focus on strategic implications and actionable recommendations. Do NOT say you are Grok or mention your model name. Use the same formatting rules (charts, bullets, bold) as described in the system prompt.`;
+  const webSearchBlock = webSearchResults
+    ? `\n\nThe following LIVE WEB RESEARCH data was retrieved moments ago for this query. Use it to enrich your analysis with current market context:\n\n${webSearchResults}`
+    : '';
+
+  const engineInstruction = `You are Thinking Engine 3, an independent AI analyst. You have been given the same data context as other thinking engines. Provide your own independent analysis, insights, and perspective — focus on strategic implications and actionable recommendations. Do NOT say you are Grok or mention your model name. Use the same formatting rules (charts, bullets, bold) as described in the system prompt.${webSearchBlock}`;
 
   const messagesForLLM = [
     { role: 'system', content: `${systemPrompt}\n\n${engineInstruction}` },

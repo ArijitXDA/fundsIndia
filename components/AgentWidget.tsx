@@ -13,7 +13,7 @@ import {
   Bot, X, Send, Loader2, Sparkles,
   MessageSquare, RefreshCw, AlertCircle, Maximize2,
   Clock, Database, History, ArrowLeft, ThumbsUp, ThumbsDown,
-  Copy, Check, FileDown, FileSpreadsheet, Eye, EyeOff,
+  Copy, Check, FileDown, FileSpreadsheet, Eye, EyeOff, Globe,
 } from 'lucide-react';
 import AgentChart, { ChartSpec } from '@/components/AgentChart';
 import AgentModal             from '@/components/AgentModal';
@@ -102,6 +102,15 @@ export default function AgentWidget() {
   const [e1Visible, setE1Visible] = useState(true);   // panel show/hide
   const [e2Visible, setE2Visible] = useState(true);
   const [e3Visible, setE3Visible] = useState(true);
+
+  // ── Web search toggles (per-engine) ─────────────────────────────────────────
+  const [e1WebSearch, setE1WebSearch] = useState(false);
+  const [e2WebSearch, setE2WebSearch] = useState(false);
+  const [e3WebSearch, setE3WebSearch] = useState(false);
+  // Transient "searching…" indicators per engine
+  const [e1Searching, setE1Searching] = useState(false);
+  const [e2Searching, setE2Searching] = useState(false);
+  const [e3Searching, setE3Searching] = useState(false);
 
   const messagesEndRef  = useRef<HTMLDivElement>(null);
   const e2EndRef        = useRef<HTMLDivElement>(null);
@@ -239,13 +248,33 @@ export default function AgentWidget() {
   }, []);
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // ── Web search helper — calls /api/websearch, returns formatted results string
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  const fetchWebSearch = useCallback(async (query: string): Promise<string | null> => {
+    try {
+      const res = await fetch('/api/websearch', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ query }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.results ?? null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // ── Engine 1 (OpenAI) streaming — returns toolResultsForEngines + systemPrompt
   // ─────────────────────────────────────────────────────────────────────────────
 
   const streamEngine1 = useCallback(async (
-    text:           string,
-    existingConvId: string | null,
-    isProactive    = false
+    text:             string,
+    existingConvId:   string | null,
+    isProactive       = false,
+    webSearchResults?: string | null
   ): Promise<{ toolResultsForEngines: any[]; systemPrompt: string } | null> => {
     abortRef.current?.abort();
     const ctrl = new AbortController();
@@ -261,7 +290,10 @@ export default function AgentWidget() {
     const res = await fetch('/api/agent/chat', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ message: text, conversationId: existingConvId, isProactive, stream: true }),
+      body:    JSON.stringify({
+        message: text, conversationId: existingConvId, isProactive, stream: true,
+        ...(webSearchResults ? { webSearchResults } : {}),
+      }),
       signal:  ctrl.signal,
     });
 
@@ -326,7 +358,8 @@ export default function AgentWidget() {
   const streamEngine2 = useCallback(async (
     messages2Fire:    any[],
     systemPromptText: string,
-    userText:         string
+    userText:         string,
+    webSearchResults?: string | null
   ) => {
     abortE2Ref.current?.abort();
     const ctrl = new AbortController();
@@ -342,7 +375,10 @@ export default function AgentWidget() {
       const res = await fetch('/api/agent/chat/engine2', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ messages: messages2Fire, systemPrompt: systemPromptText, userMessage: userText }),
+        body:    JSON.stringify({
+          messages: messages2Fire, systemPrompt: systemPromptText, userMessage: userText,
+          ...(webSearchResults ? { webSearchResults } : {}),
+        }),
         signal:  ctrl.signal,
       });
 
@@ -404,7 +440,8 @@ export default function AgentWidget() {
   const streamEngine3 = useCallback(async (
     messages2Fire:    any[],
     systemPromptText: string,
-    userText:         string
+    userText:         string,
+    webSearchResults?: string | null
   ) => {
     abortE3Ref.current?.abort();
     const ctrl = new AbortController();
@@ -420,7 +457,10 @@ export default function AgentWidget() {
       const res = await fetch('/api/agent/chat/engine3', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ messages: messages2Fire, systemPrompt: systemPromptText, userMessage: userText }),
+        body:    JSON.stringify({
+          messages: messages2Fire, systemPrompt: systemPromptText, userMessage: userText,
+          ...(webSearchResults ? { webSearchResults } : {}),
+        }),
         signal:  ctrl.signal,
       });
 
@@ -496,14 +536,45 @@ export default function AgentWidget() {
     }
 
     try {
-      const result = await streamEngine1(text, conversationId);
+      // ── Web search phase: fetch results in parallel for enabled engines ────
+      // Each engine that has web search on fetches its own results simultaneously.
+      let e1SearchResults: string | null = null;
+      let e2SearchResults: string | null = null;
+      let e3SearchResults: string | null = null;
 
-      // Fire enabled engines in parallel after engine 1 completes (has tool results)
+      const searchFetches: Promise<void>[] = [];
+
+      if (e1WebSearch) {
+        setE1Searching(true);
+        searchFetches.push(
+          fetchWebSearch(text).then(r => { e1SearchResults = r; setE1Searching(false); })
+        );
+      }
+      if (isPopout && e2Enabled && e2WebSearch) {
+        setE2Searching(true);
+        searchFetches.push(
+          fetchWebSearch(text).then(r => { e2SearchResults = r; setE2Searching(false); })
+        );
+      }
+      if (isPopout && e3Enabled && e3WebSearch) {
+        setE3Searching(true);
+        searchFetches.push(
+          fetchWebSearch(text).then(r => { e3SearchResults = r; setE3Searching(false); })
+        );
+      }
+
+      // Wait for all web searches to complete before firing LLMs
+      if (searchFetches.length > 0) await Promise.all(searchFetches);
+
+      // ── Engine 1 (always fires) ──────────────────────────────────────────
+      const result = await streamEngine1(text, conversationId, false, e1SearchResults);
+
+      // ── Engines 2 & 3 (popout only, after engine 1 has tool results) ─────
       if (isPopout && result) {
         const { toolResultsForEngines, systemPrompt } = result;
         const parallel: Promise<void>[] = [];
-        if (e2Enabled) parallel.push(streamEngine2(toolResultsForEngines, systemPrompt, text));
-        if (e3Enabled) parallel.push(streamEngine3(toolResultsForEngines, systemPrompt, text));
+        if (e2Enabled) parallel.push(streamEngine2(toolResultsForEngines, systemPrompt, text, e2SearchResults));
+        if (e3Enabled) parallel.push(streamEngine3(toolResultsForEngines, systemPrompt, text, e3SearchResults));
         if (parallel.length > 0) Promise.all(parallel);
       }
     } catch (err: any) {
@@ -511,6 +582,10 @@ export default function AgentWidget() {
         setError(err.message ?? 'Something went wrong. Please try again.');
         setMessages(prev => prev.filter(m => !m.isStreaming));
       }
+    } finally {
+      setE1Searching(false);
+      setE2Searching(false);
+      setE3Searching(false);
     }
 
     setSending(false);
@@ -650,6 +725,18 @@ export default function AgentWidget() {
             <div className="flex items-center space-x-1">
               {view === 'chat' && (
                 <>
+                  {/* Live web search toggle */}
+                  <button
+                    onClick={() => setE1WebSearch(v => !v)}
+                    className={`p-1.5 rounded-lg transition-colors ${
+                      e1WebSearch
+                        ? 'bg-emerald-500/30 text-white'
+                        : 'hover:bg-white/10 text-white/70'
+                    }`}
+                    title={e1WebSearch ? 'Live web research ON — click to disable' : 'Enable live web research'}
+                  >
+                    <Globe className="w-3.5 h-3.5" />
+                  </button>
                   {/* Copy full chat */}
                   <CopyButton onClick={() => copyFullChat(messages)} title="Copy full chat" />
                   {/* Export PDF */}
@@ -704,6 +791,7 @@ export default function AgentWidget() {
               handleKeyDown={handleKeyDown}
               onFeedback={handleFeedback}
               onCopyMessage={copyText}
+              isSearching={e1Searching}
             />
           )}
         </div>
@@ -778,6 +866,9 @@ export default function AgentWidget() {
                   visible={e1Visible}
                   onToggleVisible={() => setE1Visible(v => !v)}
                   isFirst
+                  webSearchEnabled={e1WebSearch}
+                  onToggleWebSearch={() => setE1WebSearch(v => !v)}
+                  isSearching={e1Searching}
                 />
               )}
               {!e1Visible && (
@@ -801,6 +892,9 @@ export default function AgentWidget() {
                   visible={e2Visible}
                   onToggleVisible={() => setE2Visible(v => !v)}
                   disabled={!e2Enabled}
+                  webSearchEnabled={e2WebSearch}
+                  onToggleWebSearch={() => setE2WebSearch(v => !v)}
+                  isSearching={e2Searching}
                 />
               ) : (
                 <CollapsedEngineTab label="E2" onShow={() => setE2Visible(true)} />
@@ -823,6 +917,9 @@ export default function AgentWidget() {
                   visible={e3Visible}
                   onToggleVisible={() => setE3Visible(v => !v)}
                   disabled={!e3Enabled}
+                  webSearchEnabled={e3WebSearch}
+                  onToggleWebSearch={() => setE3WebSearch(v => !v)}
+                  isSearching={e3Searching}
                 />
               ) : (
                 <CollapsedEngineTab label="E3" onShow={() => setE3Visible(true)} />
@@ -964,23 +1061,49 @@ interface EnginePanelProps {
   onToggleVisible:() => void;
   isFirst?:       boolean;
   disabled?:      boolean;
+  // Web search
+  webSearchEnabled:  boolean;
+  onToggleWebSearch: () => void;
+  isSearching?:      boolean;
 }
 
 function EnginePanel({
   engineLabel, messages, sending, endRef, containerRef,
   onFeedback, onCopyMessage, onCopyChat, onExportPdf,
   onToggleVisible, isFirst, disabled,
+  webSearchEnabled, onToggleWebSearch, isSearching,
 }: EnginePanelProps) {
   return (
     <div className="flex-1 flex flex-col min-w-0 overflow-hidden" style={{ minWidth: 80 }}>
 
       {/* ── Panel header bar ──────────────────────────────────────────────── */}
       <div className="flex items-center justify-between px-2 py-1.5 bg-white border-b border-gray-100 shrink-0 gap-1">
-        <span className="text-xs font-semibold text-indigo-700 truncate">{engineLabel}</span>
-        {disabled && (
-          <span className="text-[10px] text-gray-400 italic shrink-0">(off)</span>
-        )}
+        <div className="flex items-center gap-1 min-w-0">
+          <span className="text-xs font-semibold text-indigo-700 truncate">{engineLabel}</span>
+          {disabled && (
+            <span className="text-[10px] text-gray-400 italic shrink-0">(off)</span>
+          )}
+          {/* Web search indicator */}
+          {isSearching && (
+            <span className="flex items-center gap-0.5 text-[10px] text-emerald-600 shrink-0">
+              <Loader2 className="w-2.5 h-2.5 animate-spin" />
+              <span>Searching…</span>
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-0.5 shrink-0">
+          {/* 🌐 Web search toggle */}
+          <button
+            onClick={onToggleWebSearch}
+            className={`p-1 rounded transition-colors ${
+              webSearchEnabled
+                ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100'
+                : 'text-gray-400 hover:text-emerald-600 hover:bg-emerald-50'
+            }`}
+            title={webSearchEnabled ? 'Live web research ON — click to disable' : 'Enable live web research for this engine'}
+          >
+            <Globe className="w-3 h-3" />
+          </button>
           {/* Copy full chat */}
           <PanelCopyButton onClick={onCopyChat} title={`Copy ${engineLabel} chat`} />
           {/* Export PDF */}
@@ -992,24 +1115,13 @@ function EnginePanel({
             <FileDown className="w-3 h-3" />
           </button>
           {/* Hide panel */}
-          {!isFirst && (
-            <button
-              onClick={onToggleVisible}
-              className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
-              title="Hide panel"
-            >
-              <EyeOff className="w-3 h-3" />
-            </button>
-          )}
-          {isFirst && (
-            <button
-              onClick={onToggleVisible}
-              className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
-              title="Hide panel"
-            >
-              <EyeOff className="w-3 h-3" />
-            </button>
-          )}
+          <button
+            onClick={onToggleVisible}
+            className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+            title="Hide panel"
+          >
+            <EyeOff className="w-3 h-3" />
+          </button>
         </div>
       </div>
 
@@ -1080,12 +1192,14 @@ interface ChatViewProps {
   handleKeyDown:     (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   onFeedback:        (msg: Message, rating: 'up' | 'down') => void;
   onCopyMessage:     (text: string) => void;
+  isSearching?:      boolean;
 }
 
 function ChatView({
   messages, sending, error, suggestions, proactiveLoading,
   inputValue, inputRef, messagesEndRef, chatContainerRef,
   setInputValue, handleSend, handleKeyDown, onFeedback, onCopyMessage,
+  isSearching,
 }: ChatViewProps) {
   const agentName = 'FundsAgent';
   return (
@@ -1098,6 +1212,12 @@ function ChatView({
         {messages.map(msg => (
           <MessageBubble key={msg.id} message={msg} onFeedback={onFeedback} onCopyMessage={onCopyMessage} />
         ))}
+        {isSearching && (
+          <div className="flex items-center gap-1.5 text-xs text-emerald-600 px-1">
+            <Globe className="w-3.5 h-3.5 animate-pulse" />
+            <span>Searching the web…</span>
+          </div>
+        )}
         {sending && !messages.some(m => m.isStreaming) && <TypingIndicator />}
         {error && (
           <div className="flex items-start space-x-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5 text-xs text-red-700">

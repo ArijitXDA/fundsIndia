@@ -87,6 +87,7 @@ export async function POST(request: NextRequest) {
     conversationId,    // string | null: existing conversation ID to continue
     isProactive,       // boolean: if true, this is a proactive agent-initiated message
     stream = true,     // boolean: opt-in to SSE streaming (default true)
+    webSearchResults,  // string | undefined: pre-fetched live web research block (injected into system prompt)
   } = body;
 
   if (!message && !isProactive) {
@@ -180,8 +181,8 @@ export async function POST(request: NextRequest) {
     memory_type: m.memory_type,
   }));
 
-  // 6. Build system prompt
-  const systemPrompt = buildSystemPrompt({
+  // 6. Build system prompt (+ optional live web search injection)
+  let systemPrompt = buildSystemPrompt({
     agentName: persona?.agent_name ?? 'FundsAgent',
     employee: {
       full_name: employee.full_name,
@@ -213,6 +214,13 @@ export async function POST(request: NextRequest) {
     queryDbConfig: (access.query_db_config as any) ?? null,
     memory: memoryRows ?? [],
   });
+
+  // Append live web search results to system prompt if provided
+  if (webSearchResults && typeof webSearchResults === 'string') {
+    systemPrompt +=
+      `\n\n---\nThe following LIVE WEB RESEARCH data was retrieved moments ago for this user's query. ` +
+      `Use it to provide current market context in your response:\n\n${webSearchResults}\n---`;
+  }
 
   // 7. Build tool context
   const toolCtx: ToolContext = {

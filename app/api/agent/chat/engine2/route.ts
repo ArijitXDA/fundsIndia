@@ -36,9 +36,10 @@ export async function POST(request: NextRequest) {
   }
 
   let body: {
-    messages:    Array<{ role: string; content: string }>;
-    systemPrompt: string;
-    userMessage: string;
+    messages:         Array<{ role: string; content: string }>;
+    systemPrompt:     string;
+    userMessage:      string;
+    webSearchResults?: string; // optional live web research block
   };
   try {
     body = await request.json();
@@ -46,7 +47,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { messages, systemPrompt, userMessage } = body;
+  const { messages, systemPrompt, userMessage, webSearchResults } = body;
   if (!messages || !systemPrompt) {
     return NextResponse.json({ error: 'messages and systemPrompt are required' }, { status: 400 });
   }
@@ -54,7 +55,11 @@ export async function POST(request: NextRequest) {
   // Build the messages array for DeepSeek
   // messages already contains: [user turns + assistant turns + tool result turns]
   // from Engine 1's tool-calling phase. We inject a brief engine-specific instruction.
-  const engineInstruction = `You are Thinking Engine 2, an independent AI analyst. You have been given the same data context as other thinking engines. Provide your own independent analysis, insights, and perspective. Do NOT say you are DeepSeek or mention your model name. Use the same formatting rules (charts, bullets, bold) as described in the system prompt.`;
+  const webSearchBlock = webSearchResults
+    ? `\n\nThe following LIVE WEB RESEARCH data was retrieved moments ago for this query. Use it to enrich your analysis with current market context:\n\n${webSearchResults}`
+    : '';
+
+  const engineInstruction = `You are Thinking Engine 2, an independent AI analyst. You have been given the same data context as other thinking engines. Provide your own independent analysis, insights, and perspective. Do NOT say you are DeepSeek or mention your model name. Use the same formatting rules (charts, bullets, bold) as described in the system prompt.${webSearchBlock}`;
 
   const messagesForLLM = [
     { role: 'system', content: `${systemPrompt}\n\n${engineInstruction}` },
