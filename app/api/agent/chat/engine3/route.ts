@@ -139,7 +139,25 @@ export async function POST(request: NextRequest) {
     ? `\n\nThe following LIVE WEB RESEARCH data was retrieved for this query. Use it to enrich your analysis with current market context:\n\n${webSearchResults}`
     : '';
 
-  const engineInstruction = `You are Thinking Engine 3, an independent strategic AI analyst. You have access to the same tools as other engines and should use them to independently fetch data. Focus on strategic implications, risk factors, and actionable leadership recommendations. Explore angles and insights others may have missed. Do NOT mention your model name. Use the same formatting rules (charts via \`\`\`chart blocks, bullets, bold) as described in the system prompt.${webSearchBlock}`;
+  const engineInstruction = `You are Thinking Engine 3, an independent strategic AI analyst. You have access to the same tools as other engines and should use them to independently fetch data. Focus on strategic implications, risk factors, and actionable leadership recommendations. Explore angles and insights others may have missed. Do NOT mention your model name. Use the same formatting rules (charts via \`\`\`chart blocks, bullets, bold) as described in the system prompt.
+
+⚠️ CRITICAL DATABASE RULES — FOLLOW EXACTLY OR QUERIES WILL FAIL:
+
+1. COLUMN NAME: The employee tenure/joining date column is called \`date_joined\` (NOT hire_date, NOT join_date, NOT joining_date). Always use \`date_joined\` for any tenure, vintage, or joining-date analysis.
+
+2. CHART FORMAT: Charts MUST use this exact format with a single-line JSON:
+\`\`\`chart
+{"type":"bar","title":"Title Here","xKey":"field_name","yKey":"value_field","data":[{"field_name":"Label","value_field":123}]}
+\`\`\`
+Do NOT use Chart.js format (labels/datasets). The xKey and yKey must match exact keys in the data objects.
+
+3. NAMES NOT IDs: Never show raw employee IDs (W1234) in responses. Always JOIN with the employees table to get full_name, or use get_rankings/get_team_performance tools that already resolve names.
+
+4. LARGE TABLES: When analysing employees (1100+ rows), ALWAYS use COUNT/GROUP BY aggregation queries — never SELECT * or fetch raw rows. Use LIMIT only on aggregated results, not on the input data before aggregation.
+
+5. EMPLOYMENT STATUS: Filter active employees with \`WHERE employment_status = 'Working'\` (NOT 'Active').
+
+6. B2B SALES: Columns like "Total Net Sales (COB 100%)" are stored as TEXT — always cast: \`NULLIF("Total Net Sales (COB 100%)", '')::numeric\`. Always GROUP BY "RM Emp ID" and SUM — never use single-row lookups on B2B tables.${webSearchBlock}`;
 
   // Build initial messages: system prompt + engine instruction + prior conversation context + new user message
   let currentMessages: any[] = [
