@@ -22,6 +22,34 @@ export const dynamic = 'force-dynamic';
 // Maximum tool call rounds per request (prevents infinite loops)
 const MAX_TOOL_ROUNDS = 5;
 
+// Maximum conversation history messages to send (keeps prompt tokens low)
+const MAX_HISTORY_MESSAGES = 6;
+
+// ── OpenAI fetch with retry on 429 (rate limit) ───────────────────────────────
+// Retries up to 3 times with exponential backoff when TPM/RPM limit is hit.
+
+async function fetchOpenAI(url: string, options: RequestInit, retries = 3): Promise<Response> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await fetch(url, options);
+    if (res.status !== 429 || attempt === retries) return res;
+
+    // Parse retry-after from OpenAI error body or headers
+    let waitMs = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+    try {
+      const clone = res.clone();
+      const body  = await clone.json();
+      // OpenAI embeds wait time in the error message: "Please try again in 12.606s."
+      const match = body?.error?.message?.match(/in (\d+(?:\.\d+)?)s/);
+      if (match) waitMs = Math.ceil(parseFloat(match[1]) * 1000) + 200;
+    } catch { /* use default backoff */ }
+
+    console.warn(`[OpenAI] 429 rate limit — retrying in ${waitMs}ms (attempt ${attempt + 1}/${retries})`);
+    await new Promise(r => setTimeout(r, waitMs));
+  }
+  // Unreachable — loop always returns on last attempt
+  return fetch(url, options);
+}
+
 // ── Auth helper ───────────────────────────────────────────────────────────────
 
 async function getAuthenticatedUser(request: NextRequest) {
@@ -158,10 +186,11 @@ export async function POST(request: NextRequest) {
       .from('agent_messages')
       .select('role, content')
       .eq('conversation_id', convId)
-      .order('created_at', { ascending: true })
-      .limit(20);
+      .order('created_at', { ascending: false })
+      .limit(MAX_HISTORY_MESSAGES);
 
-    existingMessages = (msgs ?? []).map(m => ({
+    // Reverse to chronological order (we fetched desc for the LIMIT to get most recent)
+    existingMessages = (msgs ?? []).reverse().map(m => ({
       role: m.role,
       content: m.content,
     }));
@@ -179,7 +208,7 @@ export async function POST(request: NextRequest) {
     // so the model has grounded context without needing an extra tool-call round.
     // Only run when user message is present (skip for proactive triggers).
     userQuery.length > 10
-      ? searchKnowledgeBase(userQuery, 3).catch(() => [])
+      ? searchKnowledgeBase(userQuery, 2).catch(() => [])
       : Promise.resolve([]),
   ]);
 
@@ -300,7 +329,7 @@ export async function POST(request: NextRequest) {
   let needsFinalStream = true; // will be false if we got a non-tool answer early
 
   while (round < MAX_TOOL_ROUNDS) {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetchOpenAI('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -401,7 +430,7 @@ export async function POST(request: NextRequest) {
 
   if (!stream) {
     // Non-streaming fallback (e.g. proactive calls from server side)
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetchOpenAI('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -439,7 +468,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Streaming: call OpenAI with stream=true, pipe SSE tokens to client
-  const streamResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+  const streamResponse = await fetchOpenAI('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
