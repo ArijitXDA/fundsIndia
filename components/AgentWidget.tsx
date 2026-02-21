@@ -13,7 +13,7 @@ import {
   Bot, X, Send, Loader2, Sparkles,
   MessageSquare, RefreshCw, AlertCircle, Maximize2,
   Clock, Database, History, ArrowLeft, ThumbsUp, ThumbsDown,
-  Copy, Check, FileDown, FileSpreadsheet,
+  Copy, Check, FileDown, FileSpreadsheet, Eye, EyeOff,
 } from 'lucide-react';
 import AgentChart, { ChartSpec } from '@/components/AgentChart';
 import AgentModal             from '@/components/AgentModal';
@@ -96,6 +96,13 @@ export default function AgentWidget() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
+  // ── Engine enable / visible toggles ─────────────────────────────────────────
+  const [e2Enabled, setE2Enabled] = useState(true);   // checkbox: send to E2
+  const [e3Enabled, setE3Enabled] = useState(true);   // checkbox: send to E3
+  const [e1Visible, setE1Visible] = useState(true);   // panel show/hide
+  const [e2Visible, setE2Visible] = useState(true);
+  const [e3Visible, setE3Visible] = useState(true);
+
   const messagesEndRef  = useRef<HTMLDivElement>(null);
   const e2EndRef        = useRef<HTMLDivElement>(null);
   const e3EndRef        = useRef<HTMLDivElement>(null);
@@ -103,7 +110,9 @@ export default function AgentWidget() {
   const abortRef        = useRef<AbortController | null>(null);
   const abortE2Ref      = useRef<AbortController | null>(null);
   const abortE3Ref      = useRef<AbortController | null>(null);
-  const chatContainerRef = useRef<HTMLDivElement>(null);  // for PDF capture
+  const chatContainerRef  = useRef<HTMLDivElement>(null);  // E1 PDF capture
+  const e2ContainerRef    = useRef<HTMLDivElement>(null);  // E2 PDF capture
+  const e3ContainerRef    = useRef<HTMLDivElement>(null);  // E3 PDF capture
 
   // ── Load config ─────────────────────────────────────────────────────────────
 
@@ -482,20 +491,20 @@ export default function AgentWidget() {
     setMessages(prev => [...prev, userMsg]);
 
     if (isPopout) {
-      setE2Messages(prev => [...prev, { ...userMsg, id: `user-e2-${Date.now()}` }]);
-      setE3Messages(prev => [...prev, { ...userMsg, id: `user-e3-${Date.now()}` }]);
+      if (e2Enabled) setE2Messages(prev => [...prev, { ...userMsg, id: `user-e2-${Date.now()}` }]);
+      if (e3Enabled) setE3Messages(prev => [...prev, { ...userMsg, id: `user-e3-${Date.now()}` }]);
     }
 
     try {
       const result = await streamEngine1(text, conversationId);
 
-      // Fire engines 2 & 3 in parallel after engine 1 completes (has tool results)
+      // Fire enabled engines in parallel after engine 1 completes (has tool results)
       if (isPopout && result) {
         const { toolResultsForEngines, systemPrompt } = result;
-        Promise.all([
-          streamEngine2(toolResultsForEngines, systemPrompt, text),
-          streamEngine3(toolResultsForEngines, systemPrompt, text),
-        ]);
+        const parallel: Promise<void>[] = [];
+        if (e2Enabled) parallel.push(streamEngine2(toolResultsForEngines, systemPrompt, text));
+        if (e3Enabled) parallel.push(streamEngine3(toolResultsForEngines, systemPrompt, text));
+        if (parallel.length > 0) Promise.all(parallel);
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') {
@@ -569,17 +578,20 @@ export default function AgentWidget() {
     copyText(text);
   }, [copyText]);
 
-  // ── PDF export ──────────────────────────────────────────────────────────────
+  // ── PDF export (per engine) ──────────────────────────────────────────────────
 
-  const handleExportPdf = useCallback(async () => {
-    if (!chatContainerRef.current) return;
-    const agentName = config?.persona?.agentName ?? 'FundsAgent';
+  const handleExportPdf = useCallback(async (
+    containerRef: React.RefObject<HTMLDivElement>,
+    msgs: Message[],
+    label = 'FundsAgent'
+  ) => {
+    if (!containerRef.current) return;
     await exportChatToPdf(
-      chatContainerRef.current,
-      messages.map(m => ({ role: m.role as any, content: m.content, createdAt: m.createdAt })),
-      agentName
+      containerRef.current,
+      msgs.map(m => ({ role: m.role as any, content: m.content, createdAt: m.createdAt })),
+      label
     );
-  }, [messages, config]);
+  }, []);
 
   // ── Don't render if no access ───────────────────────────────────────────────
 
@@ -641,7 +653,11 @@ export default function AgentWidget() {
                   {/* Copy full chat */}
                   <CopyButton onClick={() => copyFullChat(messages)} title="Copy full chat" />
                   {/* Export PDF */}
-                  <button onClick={handleExportPdf} className="p-1.5 hover:bg-white/10 rounded-lg" title="Export PDF">
+                  <button
+                    onClick={() => handleExportPdf(chatContainerRef, messages, agentName)}
+                    className="p-1.5 hover:bg-white/10 rounded-lg"
+                    title="Export PDF"
+                  >
                     <FileDown className="w-3.5 h-3.5" />
                   </button>
                   <button onClick={() => { setView('history'); loadHistory(); }} className="p-1.5 hover:bg-white/10 rounded-lg" title="History">
@@ -699,79 +715,121 @@ export default function AgentWidget() {
           title={agentName}
           onClose={() => { setIsPopout(false); setIsOpen(true); }}
         >
-          {/* Modal inner layout */}
           <div className="flex flex-col h-full">
-            {/* Sub-header: action buttons */}
-            <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 bg-indigo-50 shrink-0">
-              <div className="flex items-center space-x-2">
-                <span className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">3 Thinking Engines</span>
-                {anySending && <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin" />}
+
+            {/* ── Sub-header: engine toggles + global actions ──────────────── */}
+            <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-100 bg-indigo-50 shrink-0 gap-2 flex-wrap">
+              {/* Engine enable checkboxes */}
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold text-indigo-700 uppercase tracking-wide mr-1">Engines:</span>
+                <label className="flex items-center gap-1 cursor-pointer select-none">
+                  <input type="checkbox" checked readOnly disabled
+                    className="accent-indigo-600 w-3.5 h-3.5 cursor-not-allowed" />
+                  <span className="text-xs text-indigo-700 font-medium">E1</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer select-none">
+                  <input type="checkbox" checked={e2Enabled}
+                    onChange={e => setE2Enabled(e.target.checked)}
+                    className="accent-indigo-600 w-3.5 h-3.5" />
+                  <span className={`text-xs font-medium ${e2Enabled ? 'text-indigo-700' : 'text-gray-400'}`}>E2</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer select-none">
+                  <input type="checkbox" checked={e3Enabled}
+                    onChange={e => setE3Enabled(e.target.checked)}
+                    className="accent-indigo-600 w-3.5 h-3.5" />
+                  <span className={`text-xs font-medium ${e3Enabled ? 'text-indigo-700' : 'text-gray-400'}`}>E3</span>
+                </label>
+                {anySending && <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin ml-1" />}
               </div>
-              <div className="flex items-center space-x-1">
-                <CopyButton onClick={() => copyFullChat(messages)} title="Copy Engine 1 chat" label="Copy E1" />
-                <button
-                  onClick={handleExportPdf}
-                  className="flex items-center space-x-1 px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors"
-                  title="Export Engine 1 chat as PDF"
-                >
-                  <FileDown className="w-3.5 h-3.5" />
-                  <span>PDF</span>
-                </button>
+
+              {/* Global actions */}
+              <div className="flex items-center gap-1">
                 <button
                   onClick={handleClear}
-                  className="flex items-center space-x-1 px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
+                  className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
                   title="New conversation (all engines)"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>New chat</span>
+                  <RefreshCw className="w-3 h-3" /><span>New</span>
                 </button>
                 <button
-                  onClick={() => { setView('history'); }}
-                  className="flex items-center space-x-1 px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
+                  onClick={() => setView('history')}
+                  className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
                 >
-                  <History className="w-3.5 h-3.5" />
-                  <span>History</span>
+                  <History className="w-3 h-3" /><span>History</span>
                 </button>
               </div>
             </div>
 
-            {/* 3-column engine layout */}
-            <div className="flex-1 overflow-hidden flex">
+            {/* ── 3-column engine layout with draggable dividers ───────────── */}
+            <div className="flex-1 overflow-hidden flex min-h-0">
+
               {/* Engine 1 */}
-              <EnginePanel
-                engineLabel="Thinking Engine 1"
-                messages={messages}
-                sending={sending}
-                endRef={messagesEndRef}
-                chatContainerRef={chatContainerRef}
-                onFeedback={handleFeedback}
-                onCopyMessage={copyText}
-              />
-              {/* Divider */}
-              <div className="w-px bg-gray-200 shrink-0" />
+              {e1Visible && (
+                <EnginePanel
+                  engineLabel="Thinking Engine 1"
+                  messages={messages}
+                  sending={sending}
+                  endRef={messagesEndRef}
+                  containerRef={chatContainerRef}
+                  onFeedback={handleFeedback}
+                  onCopyMessage={copyText}
+                  onCopyChat={() => copyFullChat(messages)}
+                  onExportPdf={() => handleExportPdf(chatContainerRef, messages, 'Engine 1')}
+                  visible={e1Visible}
+                  onToggleVisible={() => setE1Visible(v => !v)}
+                  isFirst
+                />
+              )}
+              {!e1Visible && (
+                <CollapsedEngineTab label="E1" onShow={() => setE1Visible(true)} />
+              )}
+
+              <DragDivider />
+
               {/* Engine 2 */}
-              <EnginePanel
-                engineLabel="Thinking Engine 2"
-                messages={e2Messages}
-                sending={e2Sending}
-                endRef={e2EndRef}
-                onFeedback={handleFeedback}
-                onCopyMessage={copyText}
-              />
-              {/* Divider */}
-              <div className="w-px bg-gray-200 shrink-0" />
+              {e2Visible ? (
+                <EnginePanel
+                  engineLabel="Thinking Engine 2"
+                  messages={e2Messages}
+                  sending={e2Sending}
+                  endRef={e2EndRef}
+                  containerRef={e2ContainerRef}
+                  onFeedback={handleFeedback}
+                  onCopyMessage={copyText}
+                  onCopyChat={() => copyFullChat(e2Messages)}
+                  onExportPdf={() => handleExportPdf(e2ContainerRef, e2Messages, 'Engine 2')}
+                  visible={e2Visible}
+                  onToggleVisible={() => setE2Visible(v => !v)}
+                  disabled={!e2Enabled}
+                />
+              ) : (
+                <CollapsedEngineTab label="E2" onShow={() => setE2Visible(true)} />
+              )}
+
+              <DragDivider />
+
               {/* Engine 3 */}
-              <EnginePanel
-                engineLabel="Thinking Engine 3"
-                messages={e3Messages}
-                sending={e3Sending}
-                endRef={e3EndRef}
-                onFeedback={handleFeedback}
-                onCopyMessage={copyText}
-              />
+              {e3Visible ? (
+                <EnginePanel
+                  engineLabel="Thinking Engine 3"
+                  messages={e3Messages}
+                  sending={e3Sending}
+                  endRef={e3EndRef}
+                  containerRef={e3ContainerRef}
+                  onFeedback={handleFeedback}
+                  onCopyMessage={copyText}
+                  onCopyChat={() => copyFullChat(e3Messages)}
+                  onExportPdf={() => handleExportPdf(e3ContainerRef, e3Messages, 'Engine 3')}
+                  visible={e3Visible}
+                  onToggleVisible={() => setE3Visible(v => !v)}
+                  disabled={!e3Enabled}
+                />
+              ) : (
+                <CollapsedEngineTab label="E3" onShow={() => setE3Visible(true)} />
+              )}
             </div>
 
-            {/* Shared input bar */}
+            {/* ── Shared input bar ─────────────────────────────────────────── */}
             <div className="px-4 py-3 border-t border-gray-100 bg-white shrink-0">
               {error && (
                 <div className="flex items-start space-x-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2 mb-2 text-xs text-red-700">
@@ -785,7 +843,7 @@ export default function AgentWidget() {
                   value={inputValue}
                   onChange={e => setInputValue(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Ask all 3 thinking engines simultaneously…"
+                  placeholder={`Ask ${[e2Enabled, e3Enabled].filter(Boolean).length === 2 ? 'all 3 thinking engines' : e2Enabled || e3Enabled ? '2 thinking engines' : 'Thinking Engine 1'} simultaneously…`}
                   rows={1}
                   className="flex-1 resize-none text-sm border border-gray-300 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none bg-white leading-relaxed max-h-32 overflow-auto"
                   style={{ minHeight: '42px' }}
@@ -802,7 +860,7 @@ export default function AgentWidget() {
                 </button>
               </div>
               <p className="text-xs text-gray-300 mt-1.5 text-center">
-                Enter to send all engines · Shift+Enter for newline
+                Enter to send · Shift+Enter for newline
               </p>
             </div>
           </div>
@@ -812,34 +870,162 @@ export default function AgentWidget() {
   );
 }
 
+// ─── DragDivider ──────────────────────────────────────────────────────────────
+// Draggable vertical divider between engine panels (horizontal resize).
+
+function DragDivider() {
+  const dividerRef = useRef<HTMLDivElement>(null);
+  const dragging   = useRef(false);
+  const startX     = useRef(0);
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    dragging.current = true;
+    startX.current   = e.clientX;
+    e.preventDefault();
+  };
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragging.current || !dividerRef.current) return;
+      const parent = dividerRef.current.parentElement;
+      if (!parent) return;
+      const panels = Array.from(parent.children).filter(
+        c => !(c as HTMLElement).dataset.divider
+      ) as HTMLElement[];
+      // Simple: split delta between left and right neighbour panel
+      const idx    = Array.from(parent.children).indexOf(dividerRef.current);
+      const left   = parent.children[idx - 1] as HTMLElement | undefined;
+      const right  = parent.children[idx + 1] as HTMLElement | undefined;
+      if (!left || !right) return;
+      const dx = e.clientX - startX.current;
+      startX.current = e.clientX;
+      const lw = left.getBoundingClientRect().width  + dx;
+      const rw = right.getBoundingClientRect().width - dx;
+      if (lw > 80 && rw > 80) {
+        left.style.flex  = 'none';
+        left.style.width = `${lw}px`;
+        right.style.flex = 'none';
+        right.style.width= `${rw}px`;
+      }
+    };
+    const onUp = () => { dragging.current = false; };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup',   onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup',   onUp);
+    };
+  }, []);
+
+  return (
+    <div
+      ref={dividerRef}
+      data-divider="1"
+      className="w-1.5 shrink-0 bg-gray-200 hover:bg-indigo-300 cursor-col-resize transition-colors"
+      onMouseDown={onMouseDown}
+      title="Drag to resize panels"
+    />
+  );
+}
+
+// ─── CollapsedEngineTab ───────────────────────────────────────────────────────
+// Thin vertical tab shown when a panel is hidden.
+
+function CollapsedEngineTab({ label, onShow }: { label: string; onShow: () => void }) {
+  return (
+    <div
+      className="w-7 shrink-0 flex flex-col items-center justify-center bg-gray-100 hover:bg-indigo-50 border-r border-gray-200 cursor-pointer transition-colors group"
+      onClick={onShow}
+      title={`Show ${label}`}
+    >
+      <Eye className="w-3.5 h-3.5 text-gray-400 group-hover:text-indigo-500 mb-1" />
+      <span className="text-[10px] font-semibold text-gray-400 group-hover:text-indigo-600 [writing-mode:vertical-lr] tracking-wide">
+        {label}
+      </span>
+    </div>
+  );
+}
+
 // ─── EnginePanel ───────────────────────────────────────────────────────────────
 // A single scrollable engine column in the 3-engine popout layout.
+// Includes: per-engine label bar with hide, copy, and PDF buttons.
 
 interface EnginePanelProps {
-  engineLabel:      string;
-  messages:         Message[];
-  sending:          boolean;
-  endRef:           React.RefObject<HTMLDivElement>;
-  chatContainerRef?: React.RefObject<HTMLDivElement>;
-  onFeedback:       (msg: Message, rating: 'up' | 'down') => void;
-  onCopyMessage:    (text: string) => void;
+  engineLabel:    string;
+  messages:       Message[];
+  sending:        boolean;
+  endRef:         React.RefObject<HTMLDivElement>;
+  containerRef?:  React.RefObject<HTMLDivElement>;
+  onFeedback:     (msg: Message, rating: 'up' | 'down') => void;
+  onCopyMessage:  (text: string) => void;
+  onCopyChat:     () => void;
+  onExportPdf:    () => void;
+  visible:        boolean;
+  onToggleVisible:() => void;
+  isFirst?:       boolean;
+  disabled?:      boolean;
 }
 
 function EnginePanel({
-  engineLabel, messages, sending, endRef, chatContainerRef, onFeedback, onCopyMessage,
+  engineLabel, messages, sending, endRef, containerRef,
+  onFeedback, onCopyMessage, onCopyChat, onExportPdf,
+  onToggleVisible, isFirst, disabled,
 }: EnginePanelProps) {
   return (
-    <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-      {/* Engine label */}
-      <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 shrink-0">
-        <span className="text-xs font-semibold text-indigo-700">{engineLabel}</span>
+    <div className="flex-1 flex flex-col min-w-0 overflow-hidden" style={{ minWidth: 80 }}>
+
+      {/* ── Panel header bar ──────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between px-2 py-1.5 bg-white border-b border-gray-100 shrink-0 gap-1">
+        <span className="text-xs font-semibold text-indigo-700 truncate">{engineLabel}</span>
+        {disabled && (
+          <span className="text-[10px] text-gray-400 italic shrink-0">(off)</span>
+        )}
+        <div className="flex items-center gap-0.5 shrink-0">
+          {/* Copy full chat */}
+          <PanelCopyButton onClick={onCopyChat} title={`Copy ${engineLabel} chat`} />
+          {/* Export PDF */}
+          <button
+            onClick={onExportPdf}
+            className="p-1 rounded hover:bg-indigo-50 text-gray-400 hover:text-indigo-600 transition-colors"
+            title={`Export ${engineLabel} as PDF`}
+          >
+            <FileDown className="w-3 h-3" />
+          </button>
+          {/* Hide panel */}
+          {!isFirst && (
+            <button
+              onClick={onToggleVisible}
+              className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+              title="Hide panel"
+            >
+              <EyeOff className="w-3 h-3" />
+            </button>
+          )}
+          {isFirst && (
+            <button
+              onClick={onToggleVisible}
+              className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+              title="Hide panel"
+            >
+              <EyeOff className="w-3 h-3" />
+            </button>
+          )}
+        </div>
       </div>
-      {/* Messages */}
+
+      {/* ── Messages ──────────────────────────────────────────────────────── */}
       <div
-        ref={chatContainerRef}
+        ref={containerRef}
         className="flex-1 overflow-y-auto px-3 py-3 space-y-3 bg-gray-50"
       >
-        {messages.length === 0 && !sending && (
+        {disabled && messages.length === 0 && !sending && (
+          <div className="flex flex-col items-center justify-center h-full py-8 text-center">
+            <EyeOff className="w-6 h-6 text-gray-300 mb-2" />
+            <p className="text-xs text-gray-400">Engine disabled</p>
+            <p className="text-xs text-gray-300 mt-0.5">Enable via checkbox above</p>
+          </div>
+        )}
+        {!disabled && messages.length === 0 && !sending && (
           <div className="flex flex-col items-center justify-center h-full py-8 text-center">
             <Bot className="w-7 h-7 text-indigo-300 mb-2" />
             <p className="text-xs text-gray-400">{engineLabel} awaiting your question</p>
@@ -857,6 +1043,22 @@ function EnginePanel({
         <div ref={endRef} />
       </div>
     </div>
+  );
+}
+
+// ─── PanelCopyButton ──────────────────────────────────────────────────────────
+
+function PanelCopyButton({ onClick, title }: { onClick: () => void; title?: string }) {
+  const [copied, setCopied] = useState(false);
+  const handle = () => { onClick(); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+  return (
+    <button
+      onClick={handle}
+      className="p-1 rounded hover:bg-indigo-50 text-gray-400 hover:text-indigo-600 transition-colors"
+      title={title ?? 'Copy chat'}
+    >
+      {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+    </button>
   );
 }
 

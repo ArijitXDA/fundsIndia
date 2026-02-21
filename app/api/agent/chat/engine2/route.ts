@@ -97,31 +97,37 @@ export async function POST(request: NextRequest) {
   const encoder = new TextEncoder();
 
   (async () => {
-    const reader = deepseekRes.body!.getReader();
+    const reader  = deepseekRes.body!.getReader();
     const decoder = new TextDecoder();
-    let fullContent = '';
+    let   buffer  = '';
 
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
+        // Accumulate into buffer and split on newlines (handles \r\n and \n)
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() ?? ''; // keep incomplete last line
 
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6).trim();
-          if (data === '[DONE]') continue;
+          if (data === '[DONE]' || !data) continue;
 
           try {
             const parsed = JSON.parse(data);
-            const token  = parsed.choices?.[0]?.delta?.content ?? '';
+            const token  = parsed.choices?.[0]?.delta?.content;
             if (token) {
-              fullContent += token;
               await writer.write(encoder.encode(
                 `data: ${JSON.stringify({ type: 'token', token })}\n\n`
               ));
+            }
+            // DeepSeek sometimes sends finish_reason in the final chunk
+            const finishReason = parsed.choices?.[0]?.finish_reason;
+            if (finishReason && finishReason !== 'null' && !token) {
+              // final chunk with no content — ignore, done event sent below
             }
           } catch {
             // ignore malformed SSE lines
