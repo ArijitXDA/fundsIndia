@@ -99,14 +99,14 @@ AS $$
     key,
     value,
     memory_type,
-    1 - (embedding <=> p_query_embedding) AS similarity
+    1 - (embedding operator(extensions.<=>) p_query_embedding) AS similarity
   FROM agent_memory
   WHERE
     employee_id = p_employee_id
     AND embedding IS NOT NULL
     AND (expires_at IS NULL OR expires_at > now())
-    AND 1 - (embedding <=> p_query_embedding) >= p_min_similarity
-  ORDER BY embedding <=> p_query_embedding
+    AND 1 - (embedding operator(extensions.<=>) p_query_embedding) >= p_min_similarity
+  ORDER BY embedding operator(extensions.<=>) p_query_embedding
   LIMIT p_limit;
 $$;
 
@@ -140,14 +140,14 @@ AS $$
     content,
     category,
     source,
-    1 - (embedding <=> p_query_embedding) AS similarity
+    1 - (embedding operator(extensions.<=>) p_query_embedding) AS similarity
   FROM agent_knowledge_base
   WHERE
     is_active = true
     AND embedding IS NOT NULL
     AND (p_category IS NULL OR category = p_category)
-    AND 1 - (embedding <=> p_query_embedding) >= p_min_similarity
-  ORDER BY embedding <=> p_query_embedding
+    AND 1 - (embedding operator(extensions.<=>) p_query_embedding) >= p_min_similarity
+  ORDER BY embedding operator(extensions.<=>) p_query_embedding
   LIMIT p_limit;
 $$;
 
