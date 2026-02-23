@@ -198,7 +198,23 @@ Or use get_rankings / get_team_performance tools which resolve names automatical
 
 **4. Employment status:** Filter active employees with \`WHERE employment_status = 'Working'\` (NOT 'Active').
 
-**5. B2B sales text cast:** "Total Net Sales (COB 100%)" and other B2B columns are stored as TEXT. Always cast: \`NULLIF("Total Net Sales (COB 100%)", '')::numeric\`. Always GROUP BY "RM Emp ID" and SUM.${webSearchBlock}`;
+**5. B2B sales text cast:** "Total Net Sales (COB 100%)" and other B2B columns are stored as TEXT. Always cast: \`NULLIF("Total Net Sales (COB 100%)", '')::numeric\`. Always GROUP BY "RM Emp ID" and SUM.
+
+**6. gs_overall_sales — covers ALL three verticals including Private Wealth:** This table contains month-by-month AUM, SIP, lumpsum, redemption, and COB data for B2B, B2C, AND Private Wealth advisors/RMs. The \`business_segment\` column holds "B2B", "B2C", or "Private Wealth". The \`daywise\` column is the period (e.g. "2025-04"). NEVER say "Private Wealth data is not available" — always query this table first:
+\`\`\`sql
+SELECT daywise as month, business_segment,
+  ROUND(SUM(aum_amount)::numeric / 10000000, 2) as aum_cr,
+  ROUND(SUM(sipinflow_amount)::numeric / 10000000, 2) as sip_cr,
+  ROUND(SUM(redemption_amount)::numeric / 10000000, 2) as redemption_cr
+FROM gs_overall_sales
+WHERE business_segment = 'Private Wealth'
+GROUP BY daywise, business_segment
+ORDER BY daywise ASC
+LIMIT 50
+\`\`\`
+Similarly for gs_overall_aum which has aggregated monthly AUM per segment.
+
+**MANDATORY: Always call at least one tool before writing your response.** Do not answer from the system prompt context alone — independently verify by calling query_database, get_company_summary, get_team_performance, or get_rankings first.${webSearchBlock}`;
 
   // Build initial messages: system prompt + engine instruction + prior conversation context + new user message
   let currentMessages: any[] = [
@@ -208,10 +224,13 @@ Or use get_rankings / get_team_performance tools which resolve names automatical
   ];
 
   // ── Tool-calling loop (non-streaming) ─────────────────────────────────────
+  // Round 0: force a tool call so E3 always fetches live data before answering.
+  // Subsequent rounds: 'auto' lets the model decide when to stop calling tools.
   let round = 0;
   let finalText: string | null = null;
 
   while (round < MAX_TOOL_ROUNDS) {
+    const toolChoiceForRound = (availableTools.length > 0 && round === 0) ? 'required' : (availableTools.length > 0 ? 'auto' : undefined);
     let grokRes: Response;
     try {
       grokRes = await fetch(GROK_API, {
@@ -221,7 +240,7 @@ Or use get_rankings / get_team_performance tools which resolve names automatical
           model:       GROK_MODEL,
           messages:    currentMessages,
           tools:       availableTools.length > 0 ? availableTools : undefined,
-          tool_choice: availableTools.length > 0 ? 'auto' : undefined,
+          tool_choice: toolChoiceForRound,
           temperature: 0.7,
           max_tokens:  4000,
           stream:      false,
