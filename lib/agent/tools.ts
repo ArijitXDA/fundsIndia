@@ -376,6 +376,33 @@ Do NOT use this for live performance data queries — use the data tools for tha
   {
     type: 'function' as const,
     function: {
+      name: 'get_private_wealth_summary',
+      description: `Get Private Wealth (PW) business performance data — monthly AUM, SIP inflow, lumpsum, redemption, and net trends across all PW advisors/RMs.
+Use this for any question about Private Wealth: "how is PW doing?", "PW AUM trend", "month on month Private Wealth performance", "PW vs B2B vs B2C comparison".
+This tool is available regardless of query_database access — always use it before claiming PW data is unavailable.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          months: {
+            type: 'number',
+            description: 'How many months of history to return (default 12, max 24)',
+          },
+          include_top_performers: {
+            type: 'boolean',
+            description: 'Whether to include top 5 PW advisors by AUM (default true)',
+          },
+          compare_segments: {
+            type: 'boolean',
+            description: 'Whether to include B2B and B2C alongside PW for cross-segment comparison (default false)',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'save_memory',
       description: 'Persist a piece of information about the user to memory so it can be recalled in future sessions. Use this when the user shares preferences, goals, context, or anything worth remembering long-term. Examples: preferred reporting format, personal targets, noted concerns, focus areas.',
       parameters: {
@@ -460,6 +487,9 @@ export async function executeTool(
 
     case 'get_company_summary':
       return await toolGetCompanySummary(args, ctx);
+
+    case 'get_private_wealth_summary':
+      return await toolGetPrivateWealthSummary(args, ctx);
 
     case 'search_knowledge_base':
       return await toolSearchKnowledgeBase(args, ctx);
@@ -1230,6 +1260,132 @@ async function toolGetCompanySummary(args: any, ctx: ToolContext) {
   }
 
   return result;
+}
+
+// ── Tool: get_private_wealth_summary ──────────────────────────────────────────
+// Dedicated PW tool so all users (not just those with query_database) can access
+// Private Wealth performance data. Queries gs_overall_sales and gs_overall_aum
+// for business_segment = 'Private Wealth'.
+
+async function toolGetPrivateWealthSummary(args: any, _ctx: ToolContext) {
+  const months          = Math.min(args.months ?? 12, 24);
+  const includeTop      = args.include_top_performers !== false;
+  const compareSegments = args.compare_segments === true;
+
+  // Cutoff month string e.g. "2024-02" for 12 months back from Feb 2025
+  const cutoffDate = new Date();
+  cutoffDate.setMonth(cutoffDate.getMonth() - months);
+  const cutoffStr = `${cutoffDate.getFullYear()}-${String(cutoffDate.getMonth() + 1).padStart(2, '0')}`;
+
+  // ── Monthly AUM trend from gs_overall_aum ────────────────────────────────
+  const segmentsToFetch = compareSegments
+    ? ['Private Wealth', 'B2B', 'B2C']
+    : ['Private Wealth'];
+
+  const { data: aumRows } = await supabaseAdmin
+    .from('gs_overall_aum')
+    .select('month, business_segment, overall_aum, sipinflow_cr, lumpsum_cr, red_cr, net_cr, monthly_net_sales')
+    .in('business_segment', segmentsToFetch)
+    .gte('month', cutoffStr)
+    .order('month', { ascending: true })
+    .limit(months * segmentsToFetch.length + 10);
+
+  const aumTrend = (aumRows ?? []).map(r => ({
+    month:           r.month,
+    segment:         r.business_segment,
+    overall_aum_cr:  parseFloat((Number(r.overall_aum ?? 0) / 1).toFixed(2)),
+    sip_inflow_cr:   parseFloat((Number(r.sipinflow_cr ?? 0)).toFixed(2)),
+    lumpsum_cr:      parseFloat((Number(r.lumpsum_cr ?? 0)).toFixed(2)),
+    redemption_cr:   parseFloat((Number(r.red_cr ?? 0)).toFixed(2)),
+    net_inflow_cr:   parseFloat((Number(r.net_cr ?? 0)).toFixed(2)),
+    net_sales_cr:    parseFloat((Number(r.monthly_net_sales ?? 0)).toFixed(2)),
+  }));
+
+  // ── Summary stats for PW from gs_overall_sales ────────────────────────────
+  const { data: salesRows } = await supabaseAdmin
+    .from('gs_overall_sales')
+    .select('daywise, arn_rm, name, sipinflow_amount, lumpsuminflow_amount, redemption_amount, aum_amount')
+    .eq('business_segment', 'Private Wealth')
+    .gte('daywise', cutoffStr)
+    .order('daywise', { ascending: true })
+    .limit(5000);
+
+  // Aggregate by month
+  const byMonth = new Map<string, {
+    sip: number; lumpsum: number; redemption: number; aum: number; advisors: Set<string>;
+  }>();
+  for (const r of (salesRows ?? [])) {
+    const m = r.daywise;
+    if (!byMonth.has(m)) byMonth.set(m, { sip: 0, lumpsum: 0, redemption: 0, aum: 0, advisors: new Set() });
+    const e = byMonth.get(m)!;
+    e.sip       += Number(r.sipinflow_amount   ?? 0);
+    e.lumpsum   += Number(r.lumpsuminflow_amount ?? 0);
+    e.redemption += Number(r.redemption_amount  ?? 0);
+    e.aum       += Number(r.aum_amount          ?? 0);
+    if (r.arn_rm) e.advisors.add(r.arn_rm);
+  }
+
+  const monthlySales = Array.from(byMonth.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, d]) => ({
+      month,
+      sip_cr:        parseFloat((d.sip / 10_000_000).toFixed(2)),
+      lumpsum_cr:    parseFloat((d.lumpsum / 10_000_000).toFixed(2)),
+      redemption_cr: parseFloat((d.redemption / 10_000_000).toFixed(2)),
+      net_cr:        parseFloat(((d.sip + d.lumpsum - d.redemption) / 10_000_000).toFixed(2)),
+      aum_cr:        parseFloat((d.aum / 10_000_000).toFixed(2)),
+      active_advisors: d.advisors.size,
+    }));
+
+  // Top PW advisors by total AUM
+  let topPerformers: any[] = [];
+  if (includeTop && salesRows && salesRows.length > 0) {
+    const byAdvisor = new Map<string, { name: string; aum: number; sip: number }>();
+    for (const r of salesRows) {
+      const key = r.arn_rm ?? '';
+      if (!key) continue;
+      if (!byAdvisor.has(key)) byAdvisor.set(key, { name: r.name ?? key, aum: 0, sip: 0 });
+      const e = byAdvisor.get(key)!;
+      e.aum += Number(r.aum_amount ?? 0);
+      e.sip += Number(r.sipinflow_amount ?? 0);
+    }
+    topPerformers = Array.from(byAdvisor.entries())
+      .sort((a, b) => b[1].aum - a[1].aum)
+      .slice(0, 5)
+      .map(([arn, d], i) => ({
+        rank: i + 1,
+        advisor: d.name || arn,
+        total_aum_cr: parseFloat((d.aum / 10_000_000).toFixed(2)),
+        total_sip_cr: parseFloat((d.sip / 10_000_000).toFixed(2)),
+      }));
+  }
+
+  // Overall PW totals across all fetched months
+  const pwTotals = monthlySales.reduce((acc, m) => ({
+    sip_cr:        acc.sip_cr + m.sip_cr,
+    lumpsum_cr:    acc.lumpsum_cr + m.lumpsum_cr,
+    redemption_cr: acc.redemption_cr + m.redemption_cr,
+    net_cr:        acc.net_cr + m.net_cr,
+  }), { sip_cr: 0, lumpsum_cr: 0, redemption_cr: 0, net_cr: 0 });
+
+  const latestMonth = monthlySales[monthlySales.length - 1] ?? null;
+
+  return {
+    segment: 'Private Wealth',
+    period_months: months,
+    period_from: cutoffStr,
+    totals_over_period: {
+      sip_cr:        parseFloat(pwTotals.sip_cr.toFixed(2)),
+      lumpsum_cr:    parseFloat(pwTotals.lumpsum_cr.toFixed(2)),
+      redemption_cr: parseFloat(pwTotals.redemption_cr.toFixed(2)),
+      net_inflow_cr: parseFloat(pwTotals.net_cr.toFixed(2)),
+    },
+    latest_month: latestMonth ?? null,
+    monthly_trend: monthlySales,
+    aum_trend_from_sheets: aumTrend.filter(r => r.segment === 'Private Wealth'),
+    ...(compareSegments && { cross_segment_aum_trend: aumTrend }),
+    ...(includeTop && { top_performers: topPerformers }),
+  };
 }
 
 // ── Tool: search_knowledge_base ───────────────────────────────────────────────

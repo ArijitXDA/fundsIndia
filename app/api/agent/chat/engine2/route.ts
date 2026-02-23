@@ -53,17 +53,23 @@ async function resolveContext(request: NextRequest) {
 // ── Tool filter (mirrors Engine 1) ────────────────────────────────────────────
 
 function filterTools(tools: any[], access: any) {
-  const canOrgStructure  = false; // Engine 2 stays focused on data analysis
+  const canOrgStructure  = true; // E2 enabled for org structure — useful for context
   const canProactive     = (access.override_can_proactively_surface_insights ?? false);
   const canQueryDatabase = access.can_query_database ?? false;
   const rowScope         = (access.row_scope as any)?.default ?? 'own_only';
   const isAllScope       = rowScope === 'all';
+  const businessUnit     = access.business_unit ?? '';
+  const canPWSummary     = isAllScope
+    || businessUnit === 'Private Wealth'
+    || rowScope === 'own_and_team'
+    || rowScope === 'vertical_only';
 
   return tools.filter(t => {
-    if (t.function.name === 'get_org_structure'      && !canOrgStructure)  return false;
-    if (t.function.name === 'get_proactive_insights' && !canProactive)     return false;
-    if (t.function.name === 'get_company_summary'    && !isAllScope)       return false;
-    if (t.function.name === 'query_database'         && !canQueryDatabase) return false;
+    if (t.function.name === 'get_org_structure'          && !canOrgStructure)  return false;
+    if (t.function.name === 'get_proactive_insights'     && !canProactive)     return false;
+    if (t.function.name === 'get_company_summary'        && !isAllScope)       return false;
+    if (t.function.name === 'get_private_wealth_summary' && !canPWSummary)     return false;
+    if (t.function.name === 'query_database'             && !canQueryDatabase) return false;
     return true;
   });
 }
@@ -149,8 +155,17 @@ After fetching ANY data with 3 or more rows, you MUST output a chart block. No e
 {"type":"bar","title":"My Chart Title","xKey":"name","yKey":"total_cr","data":[{"name":"Alpha","total_cr":12.3},{"name":"Beta","total_cr":8.7},{"name":"Gamma","total_cr":5.1}]}
 \`\`\`
 
+Supported chart types (use the most appropriate one):
+- "bar" — rankings/comparisons (most common)
+- "line" — trends over time
+- "area" — volume trends (AUM growth)
+- "pie" — share/composition
+- "waterfall" — AUM bridge / cumulative change (signed values: positive=inflow, negative=outflow). Example: {"type":"waterfall","title":"AUM Bridge","xKey":"stage","yKey":"value_cr","data":[{"stage":"Opening","value_cr":500},{"stage":"SIP","value_cr":45},{"stage":"Redemption","value_cr":-30},{"stage":"Closing","value_cr":515}]}
+- "histogram" — distribution/frequency. Use pre-binned data with "range" and "count" columns. Example: {"type":"histogram","title":"RM MTD Distribution","xKey":"range","yKey":"count","data":[{"range":"0-5","count":12},{"range":"5-10","count":28},{"range":"10-20","count":15}]}
+- "scatter" — correlation (both axes MUST be numeric). Example: {"type":"scatter","title":"AUM vs Inflow","xKey":"aum_cr","yKey":"net_inflow_cr","data":[{"aum_cr":120,"net_inflow_cr":8.5},{"aum_cr":95,"net_inflow_cr":6.2}]}
+- "funnel" — conversion stages. Example: {"type":"funnel","title":"Lead Pipeline","xKey":"stage","yKey":"count","data":[{"stage":"Leads","count":1000},{"stage":"Contacted","count":650},{"stage":"Converted","count":85}]}
+
 Rules:
-- type: "bar" (rankings/categories) | "line" (trends over time) | "area" (volume trends) | "pie" (share/composition)
 - xKey and yKey must EXACTLY match keys used in the data objects
 - data must be a flat array of objects — each object has simple key:value pairs (strings and numbers only)
 - DO NOT use Chart.js format (no "labels" array, no "datasets" array, no "backgroundColor") — that format is invalid here
@@ -201,7 +216,7 @@ Or use get_rankings / get_team_performance tools which resolve names automatical
 
 **5. B2B sales text cast:** "Total Net Sales (COB 100%)" and other B2B columns are stored as TEXT. Always cast: \`NULLIF("Total Net Sales (COB 100%)", '')::numeric\`. Always GROUP BY "RM Emp ID" and SUM.
 
-**6. gs_overall_sales — covers ALL three verticals including Private Wealth:** This table contains month-by-month AUM, SIP, lumpsum, redemption, and COB data for B2B, B2C, AND Private Wealth advisors/RMs. The \`business_segment\` column holds "B2B", "B2C", or "Private Wealth". The \`daywise\` column is the period (e.g. "2025-04"). NEVER say "Private Wealth data is not available" — always query this table first:
+**6. Private Wealth data — use get_private_wealth_summary tool first:** NEVER say "Private Wealth data is not available". The \`get_private_wealth_summary\` tool gives you full PW monthly AUM, SIP, lumpsum, redemption, and top performer data without needing query_database. If you also have query_database access, you can further query gs_overall_sales with business_segment = 'Private Wealth'.
 \`\`\`sql
 SELECT daywise as month, business_segment,
   ROUND(SUM(aum_amount)::numeric / 10000000, 2) as aum_cr,
@@ -215,7 +230,9 @@ LIMIT 50
 \`\`\`
 Similarly for gs_overall_aum which has aggregated monthly AUM per segment.
 
-**MANDATORY: Always call at least one tool before writing your response.** Do not answer from the system prompt context alone — independently verify by calling query_database, get_company_summary, get_team_performance, or get_rankings first.${webSearchBlock}`;
+**7. Self-verification on empty results:** If a tool returns row_count:0 or empty array — retry with broader filters before reporting "no data". Explain what filter caused the empty result.
+
+**MANDATORY: Always call at least one tool before writing your response.** Do not answer from the system prompt context alone — independently verify by calling get_private_wealth_summary, query_database, get_company_summary, get_team_performance, or get_rankings first.${webSearchBlock}`;
 
   // Build initial messages: system prompt + engine instruction + prior conversation context + new user message
   let currentMessages: any[] = [

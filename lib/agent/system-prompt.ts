@@ -157,6 +157,8 @@ function buildAccessGuardrailsBlock(config: SystemPromptConfig): string {
   if (capabilities.queryDatabase) canDo.push('Use query_database to run custom SQL SELECT queries for ad-hoc data questions');
   else cannotDo.push('Use the query_database tool (not enabled for this user — use the specific tools instead)');
 
+  canDo.push('Use get_private_wealth_summary for Private Wealth AUM, SIP, lumpsum and monthly trend data');
+
   // Table access
   const allowedTables = dataAccess.allowedTables;
   const deniedTables = dataAccess.deniedTables ?? [];
@@ -595,17 +597,23 @@ When presenting **tabular or numerical data with 3+ rows**, you MUST render a ch
 {"type":"bar","title":"Top 5 RMs by MTD Sales","xKey":"name","yKey":"total_cr","data":[{"name":"Raj","total_cr":12.3},{"name":"Priya","total_cr":10.1}]}
 \`\`\`
 
-**Chart types:**
+**Chart types (all 8 supported):**
 - \`bar\` — rankings, comparisons, categories (most common)
 - \`line\` — trends over time (month-by-month)
-- \`area\` — trends with volume emphasis (AUM growth)
-- \`pie\` — composition / share (B2B vs B2C split)
+- \`area\` — trends with volume emphasis (AUM growth, SIP trend)
+- \`pie\` — composition / share (B2B vs B2C vs PW split)
+- \`waterfall\` — cumulative change bridge (AUM opening → SIP → lumpsum → redemption → closing). Each row has a signed value (positive = inflow, negative = outflow). Example: \`{"type":"waterfall","title":"AUM Bridge","xKey":"stage","yKey":"value_cr","data":[{"stage":"Opening AUM","value_cr":500},{"stage":"SIP Inflow","value_cr":45},{"stage":"Lumpsum","value_cr":20},{"stage":"Redemptions","value_cr":-30},{"stage":"Closing AUM","value_cr":535}]}\`
+- \`histogram\` — frequency distribution (RM performance distribution, AUM spread). Two modes: (a) pass raw data rows with a numeric column and let the renderer auto-bin, OR (b) pass pre-binned data with \`range\` and \`count\` columns. Example pre-binned: \`{"type":"histogram","title":"RM MTD Distribution","xKey":"range","yKey":"count","data":[{"range":"0-5","count":12},{"range":"5-10","count":28}]}\`
+- \`scatter\` — correlation / XY plot (AUM vs net inflow, headcount vs output). Both axes MUST be numeric. Optional \`zKey\` for bubble size. Example: \`{"type":"scatter","title":"AUM vs Net Inflow","xKey":"aum_cr","yKey":"net_inflow_cr","xLabel":"AUM (Cr)","yLabel":"Net Inflow (Cr)","data":[{"aum_cr":120,"net_inflow_cr":8.5},{"aum_cr":95,"net_inflow_cr":6.2}]}\`
+- \`funnel\` — conversion stages, lead pipeline, hierarchical volume. xKey = stage label, yKey = numeric value (largest stage first). Example: \`{"type":"funnel","title":"Lead Conversion","xKey":"stage","yKey":"count","data":[{"stage":"Assigned Leads","count":1000},{"stage":"Contacted","count":650},{"stage":"Demo Done","count":280},{"stage":"Converted","count":85}]}\`
 
 **Chart spec fields:**
-- \`type\`: "bar" | "line" | "area" | "pie"
+- \`type\`: "bar" | "line" | "area" | "pie" | "waterfall" | "histogram" | "scatter" | "funnel"
 - \`title\`: short descriptive title (required)
 - \`xKey\`: the field name for the X axis / pie labels (must match a key in data objects)
 - \`yKey\`: the field name(s) for Y axis / pie value — can be a string OR array of strings for multi-series
+- \`zKey\`: (scatter only) field name for bubble size
+- \`xLabel\`, \`yLabel\`: axis labels (optional, useful for scatter)
 - \`data\`: array of objects — max 20 items for readability
 - \`stacked\`: true for stacked bar/area charts (optional)
 
@@ -634,7 +642,11 @@ Immediately after every \`\`\`chart block, emit a \`\`\`rawdata block containing
 - "Top N / bottom N / rankings" → \`bar\`
 - "How has X changed over months" → \`line\` or \`area\`
 - "What % share / breakdown" → \`pie\`
-- "Compare two metrics side by side" → \`bar\` with yKey array`;
+- "Compare two metrics side by side" → \`bar\` with yKey array
+- "AUM bridge / inflow vs outflow decomposition" → \`waterfall\`
+- "How are RMs distributed by sales range?" → \`histogram\`
+- "Is there a correlation between X and Y?" → \`scatter\`
+- "Lead funnel / conversion stages" → \`funnel\``;
 }
 
 // ── Layer 5: Memory ───────────────────────────────────────────────────────────
@@ -699,7 +711,23 @@ Always use the available tools to fetch live data. Never guess or approximate nu
 
 **NEVER say "I cannot access that data" or "I don't have access to individual figures" when query_database is available.** Use it. Write the SQL. Return the answer.
 
+**NEVER say "Private Wealth data is not available"** — use the \`get_private_wealth_summary\` tool first. It is available to all users with manager/leader scope and provides full PW AUM, SIP, lumpsum, redemption, and monthly trends without requiring query_database access.
+
 For multi-part questions, call multiple tools in sequence as needed.
 
-**Chart output rule:** After fetching any data with 3+ rows of numerical results, ALWAYS render a \`\`\`chart block alongside your text summary. Pick the most appropriate chart type (bar for rankings, line/area for trends, pie for shares). ALWAYS follow every chart block with a \`\`\`rawdata block containing the full JSON query result (all columns, all rows).`;
+**Self-verification rule (CRITICAL):** If a tool call returns \`row_count: 0\` or an empty array:
+1. Do NOT report "no data found" immediately.
+2. Try again with a relaxed query — remove date filters, try a broader segment, or use a different table.
+3. If still empty after retry, THEN report what you tried and why the result was empty (e.g. "The table has no rows matching employment_status='Working' AND business_unit='B2B' after 2025-01" — tell the user the specific filter that caused the empty result).
+4. Never silently return blank content. Always explain what you searched for and what you found (or didn't find).
+
+**Chart output rule:** After fetching any data with 3+ rows of numerical results, ALWAYS render a \`\`\`chart block alongside your text summary. Pick the most appropriate chart type:
+- Rankings/comparisons → \`bar\`
+- Month-by-month trends → \`line\` or \`area\`
+- Composition/share → \`pie\`
+- AUM bridge/inflow decomposition → \`waterfall\`
+- RM performance distribution → \`histogram\`
+- Correlation between two metrics → \`scatter\`
+- Lead pipeline/conversion stages → \`funnel\`
+ALWAYS follow every chart block with a \`\`\`rawdata block containing the full JSON query result (all columns, all rows).`;
 }

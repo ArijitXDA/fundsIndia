@@ -20,7 +20,7 @@ import { getSemanticMemories, searchKnowledgeBase } from '@/lib/agent/embeddings
 export const dynamic = 'force-dynamic';
 
 // Maximum tool call rounds per request (prevents infinite loops)
-const MAX_TOOL_ROUNDS = 5;
+const MAX_TOOL_ROUNDS = 8;
 
 // Maximum conversation history messages to send (keeps prompt tokens low)
 const MAX_HISTORY_MESSAGES = 6;
@@ -307,7 +307,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'OpenAI API key not configured' }, { status: 500 });
   }
 
-  const model              = persona?.model ?? 'gpt-4o';
+  const model              = persona?.model ?? 'gpt-4.1';
   const temperature        = persona?.temperature ?? 0.7;
   const topP               = persona?.top_p ?? 1;
   const maxTokens          = persona?.max_tokens ?? 4000; // raised from 1000 — charts + data need room
@@ -684,13 +684,22 @@ function filterTools(tools: any[], access: any, persona: any) {
   const canQueryDatabase  = access.can_query_database ?? false;
   const rowScope          = (access.row_scope as any)?.default ?? 'own_only';
   const isAllScope        = rowScope === 'all';
+  // PW summary accessible to: all-scope users AND users whose BU is Private Wealth
+  // AND any manager who may have PW people in their team.
+  // Rule: block only for own_only scope with non-PW business unit (pure leaf individual contributor).
+  const businessUnit      = access.business_unit ?? '';
+  const canPWSummary      = isAllScope
+    || businessUnit === 'Private Wealth'
+    || rowScope === 'own_and_team'
+    || rowScope === 'vertical_only';
 
   return tools.filter(t => {
-    if (t.function.name === 'get_org_structure'      && !canOrgStructure)  return false;
-    if (t.function.name === 'get_proactive_insights' && !canProactive)     return false;
-    if (t.function.name === 'get_company_summary'    && !isAllScope)       return false;
+    if (t.function.name === 'get_org_structure'             && !canOrgStructure)  return false;
+    if (t.function.name === 'get_proactive_insights'        && !canProactive)     return false;
+    if (t.function.name === 'get_company_summary'           && !isAllScope)       return false;
+    if (t.function.name === 'get_private_wealth_summary'    && !canPWSummary)     return false;
     // query_database only available when explicitly enabled per-user in agent_access
-    if (t.function.name === 'query_database'         && !canQueryDatabase) return false;
+    if (t.function.name === 'query_database'                && !canQueryDatabase) return false;
     return true;
   });
 }
