@@ -1402,12 +1402,27 @@ function MessageBubble({ message, onFeedback, onCopyMessage }: MessageBubbleProp
 
   const renderContent = (content: string) => {
     const elements: React.ReactNode[] = [];
-    const segments = content.split(/(```[\s\S]*?```)/g);
+    // Split on closed fences first; then separately handle any trailing unclosed fence
+    // (e.g. chart JSON truncated mid-stream when max_tokens is hit).
+    const closedFenceRx = /(```[\s\S]*?```)/g;
+    const segments = content.split(closedFenceRx);
+
+    // If the last non-empty segment starts with ``` but has no closing ```,
+    // it's a truncated fence — append it back so the forEach below can attempt recovery.
+    const lastSeg = segments[segments.length - 1];
+    if (lastSeg && lastSeg.trimStart().startsWith('```') && !lastSeg.endsWith('```')) {
+      // already in segments — will be handled as a plain text fallback below
+    }
+
     let pendingRawData: RawDataRow[] | null = null;
 
     segments.forEach((seg, si) => {
-      if (seg.startsWith('```')) {
-        const inner = seg.replace(/^```(\w*)\n?/, '').replace(/\n?```$/, '');
+      // Handle both properly-closed fences AND truncated/unclosed fences that start with ```
+      const isFence = seg.startsWith('```');
+      if (isFence) {
+        // For truncated fences (no closing ```), the inner content is everything after the lang tag
+        const raw   = seg.endsWith('```') ? seg : seg + '```'; // temporarily close for extraction
+        const inner = raw.replace(/^```(\w*)\n?/, '').replace(/\n?```$/, '');
         const lang  = seg.match(/^```(\w+)/)?.[1] ?? '';
 
         // rawdata block — hidden visually, stored for Excel export
@@ -1422,8 +1437,27 @@ function MessageBubble({ message, onFeedback, onCopyMessage }: MessageBubbleProp
 
         // Chart block
         if (lang === 'chart') {
-          try {
-            const spec: ChartSpec = JSON.parse(inner);
+          // Try to parse the chart JSON. If it fails (e.g. truncated mid-stream),
+          // attempt to repair by closing any open array/object and retrying.
+          let spec: ChartSpec | null = null;
+          const trimmedInner = inner.trim();
+          const attempts = [trimmedInner];
+          // Repair attempt 1: close a truncated data array and the root object
+          if (!spec) {
+            try {
+              // Find the last complete object in the data array by trimming to last '}'
+              const lastBrace = trimmedInner.lastIndexOf('}');
+              if (lastBrace > 0) {
+                const repaired = trimmedInner.slice(0, lastBrace + 1) + ']}';
+                attempts.push(repaired);
+              }
+            } catch { /* ignore */ }
+          }
+          for (const attempt of attempts) {
+            try { spec = JSON.parse(attempt); break; } catch { /* try next */ }
+          }
+
+          if (spec) {
             const rawForExport = pendingRawData; // capture before reset
             pendingRawData = null;
             elements.push(
@@ -1431,7 +1465,7 @@ function MessageBubble({ message, onFeedback, onCopyMessage }: MessageBubbleProp
                 <AgentChart spec={spec} />
                 {/* Excel export button */}
                 <button
-                  onClick={() => exportChartToExcel(spec, rawForExport)}
+                  onClick={() => exportChartToExcel(spec!, rawForExport)}
                   className="mt-1.5 flex items-center space-x-1.5 text-xs text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg px-2.5 py-1 transition-colors"
                   title="Export chart data to Excel"
                 >
@@ -1440,10 +1474,10 @@ function MessageBubble({ message, onFeedback, onCopyMessage }: MessageBubbleProp
                 </button>
               </div>
             );
-          } catch {
+          } else {
             elements.push(
               <pre key={si} className="mt-2 p-2 bg-gray-100 rounded-lg text-xs font-mono overflow-x-auto text-red-600">
-                ⚠️ Invalid chart JSON: {inner}
+                ⚠️ Chart could not be rendered (response was truncated)
               </pre>
             );
           }

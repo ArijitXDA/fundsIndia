@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
 
 const GROK_API   = 'https://api.x.ai/v1/chat/completions';
 const GROK_MODEL = 'grok-3-mini';
-const MAX_TOOL_ROUNDS = 5;
+const MAX_TOOL_ROUNDS = 8;
 
 // ── Auth + context resolution ─────────────────────────────────────────────────
 
@@ -269,6 +269,12 @@ Similarly for gs_overall_aum which has aggregated monthly AUM per segment.
     if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
       finalText = assistantMsg.content ?? '';
       break;
+    }
+
+    // Some models emit both tool_calls AND content in the same message.
+    // Capture substantive content as a candidate final text in case the loop exhausts.
+    if (assistantMsg.content && assistantMsg.content.trim().length > 30) {
+      finalText = assistantMsg.content;
     }
 
     // Execute tool calls

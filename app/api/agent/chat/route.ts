@@ -310,7 +310,7 @@ export async function POST(request: NextRequest) {
   const model              = persona?.model ?? 'gpt-4o';
   const temperature        = persona?.temperature ?? 0.7;
   const topP               = persona?.top_p ?? 1;
-  const maxTokens          = persona?.max_tokens ?? 1000;
+  const maxTokens          = persona?.max_tokens ?? 4000; // raised from 1000 — charts + data need room
   const presencePenalty    = persona?.presence_penalty ?? 0;
   const frequencyPenalty   = persona?.frequency_penalty ?? 0;
 
