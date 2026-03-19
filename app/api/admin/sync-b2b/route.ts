@@ -144,23 +144,75 @@ function parseYtdSheet(
 ): { records: YtdRecord[]; fiscalYear: string; rmCount: number } {
   if (raw.length < 3) return { records: [], fiscalYear: 'unknown', rmCount: 0 };
 
-  const dateRow = raw[1] ?? [];   // row 2 (index 1): Excel serial dates
+  // ── Find the RM block header row ──────────────────────────────────────────
+  // Search 'RM' in the first 5 columns to handle sheets where data starts
+  // at column B (colOffset=1) rather than column A (colOffset=0).
+  let rmHeaderIdx = -1;
+  let colOffset   = 0;
 
-  // Determine fiscal year from section 1's date (Apr of the FY)
-  const apr25Serial = dateRow[RM_MONTHLY_SECTION_STARTS[0] + 2] as number;
-  const apr25Date   = new Date(Math.round((apr25Serial - 25569) * 86400 * 1000));
-  const fyStartYear = apr25Date.getUTCFullYear();                            // e.g. 2025
+  for (let i = 0; i < raw.length; i++) {
+    const row = raw[i];
+    if (!row) continue;
+    for (let c = 0; c < 5; c++) {
+      if (String(row[c] ?? '').trim() === 'RM') {
+        rmHeaderIdx = i;
+        colOffset   = c;
+        break;
+      }
+    }
+    if (rmHeaderIdx >= 0) break;
+  }
+
+  if (rmHeaderIdx < 0) {
+    // Provide enough debug info to diagnose the actual sheet layout
+    const sample = raw.slice(0, 10)
+      .map((r, i) => `row${i}:${JSON.stringify(r?.slice(0, 6))}`)
+      .join(' | ');
+    throw new Error(
+      `Could not find RM block header in T vs A_YTD sheet (checked first 5 columns). ` +
+      `First 10 rows sample: ${sample}`
+    );
+  }
+
+  // ── Find the date row (Excel serial numbers for each monthly section) ──────
+  // Look for a row where the expected date cell is a number > 40000 (any date
+  // after 2009). Search backwards from the RM header to find the nearest date row.
+  let dateRow: (string | number | null)[] = [];
+  const dateColCheck = colOffset + RM_MONTHLY_SECTION_STARTS[0] + 2;
+
+  for (let i = rmHeaderIdx - 1; i >= 0; i--) {
+    const row = raw[i] ?? [];
+    const val = row[dateColCheck];
+    if (typeof val === 'number' && val > 40000) {
+      dateRow = row;
+      break;
+    }
+  }
+
+  // Fallback: scan all rows for the date
+  if (!dateRow.length) {
+    for (let i = 0; i < raw.length; i++) {
+      const row = raw[i] ?? [];
+      const val = row[dateColCheck];
+      if (typeof val === 'number' && val > 40000) {
+        dateRow = row;
+        break;
+      }
+    }
+  }
+
+  // ── Determine fiscal year ─────────────────────────────────────────────────
+  const apr25Serial = dateRow[colOffset + RM_MONTHLY_SECTION_STARTS[0] + 2] as number;
+  const apr25Date   = new Date(Math.round(((apr25Serial || 45772) - 25569) * 86400 * 1000));
+  const fyStartYear = apr25Date.getUTCFullYear();                              // e.g. 2025
   const fiscalYear  = `FY${fyStartYear}-${String(fyStartYear + 1).slice(-2)}`; // 'FY2025-26'
 
   // Build period labels for each monthly section
   const monthPeriods: string[] = RM_MONTHLY_SECTION_STARTS.map((s) =>
-    excelSerialToMonthLabel(dateRow[s + 2] as number, fyStartYear)
+    excelSerialToMonthLabel(dateRow[colOffset + s + 2] as number, fyStartYear)
   );
 
-  // Find the RM block header row (col 0 === 'RM')
-  const rmHeaderIdx = raw.findIndex(row => row && String(row[0] ?? '').trim() === 'RM');
-  if (rmHeaderIdx < 0) throw new Error('Could not find RM block header in T vs A_YTD sheet');
-
+  // ── Parse RM data rows ────────────────────────────────────────────────────
   const records: YtdRecord[] = [];
   const skipPrefixes = ['*', 'Incl', 'Note', 'ZM', 'RGM', 'BM', 'RM'];
 
@@ -170,21 +222,21 @@ function parseYtdSheet(
     // Skip empty rows
     if (!row.some(v => v !== null && v !== undefined && v !== '')) continue;
 
-    const rmName = toStr(row[0]);
+    const rmName = toStr(row[colOffset]);
     // Skip header repeats, notes, empty name rows
     if (!rmName) continue;
     if (skipPrefixes.some(p => rmName.startsWith(p))) continue;
 
-    const branch = toStr(row[YTD_SECTION_COL + 1]) || null; // col 116
+    const ytdCol = colOffset + YTD_SECTION_COL;
+    const branch = toStr(row[ytdCol + 1]) || null;
 
     // ── 12 monthly records ────────────────────────────────────────────────────
     for (let mi = 0; mi < RM_MONTHLY_SECTION_STARTS.length; mi++) {
-      const s      = RM_MONTHLY_SECTION_STARTS[mi];
+      const s      = colOffset + RM_MONTHLY_SECTION_STARTS[mi];
       const period = monthPeriods[mi];
-      // Only emit a monthly record if there's any meaningful data (not all zero)
+      const mfTgt  = toNumOrNull(row[s + 1]);
       const mfAch  = toNumOrNull(row[s + 2]);
       const altAch = toNumOrNull(row[s + 5]);
-      const mfTgt  = toNumOrNull(row[s + 1]);
       if (mfTgt === null && mfAch === null && altAch === null) continue;
 
       records.push({
@@ -205,8 +257,8 @@ function parseYtdSheet(
     }
 
     // ── YTD record ────────────────────────────────────────────────────────────
-    const ytdMfTgt = toNumOrNull(row[YTD_SECTION_COL + 2]); // col 117
-    const ytdMfAch = toNumOrNull(row[YTD_SECTION_COL + 3]); // col 118
+    const ytdMfTgt = toNumOrNull(row[ytdCol + 2]);
+    const ytdMfAch = toNumOrNull(row[ytdCol + 3]);
     if (ytdMfTgt !== null || ytdMfAch !== null) {
       records.push({
         rm_name:       rmName,
@@ -215,13 +267,13 @@ function parseYtdSheet(
         fiscal_year:   fiscalYear,
         mf_target:     ytdMfTgt,
         mf_ach_cob50:  ytdMfAch,
-        mf_ach_pct:    toNumOrNull(row[YTD_SECTION_COL + 4]),  // col 119
-        alt_target:    toNumOrNull(row[YTD_SECTION_COL + 5]),  // col 120
-        alt_ach:       toNumOrNull(row[YTD_SECTION_COL + 6]),  // col 121
-        alt_ach_pct:   toNumOrNull(row[YTD_SECTION_COL + 7]),  // col 122
-        consol_target: toNumOrNull(row[YTD_SECTION_COL + 10]), // col 125
-        consol_ach:    toNumOrNull(row[YTD_SECTION_COL + 11]), // col 126
-        consol_pct:    toNumOrNull(row[YTD_SECTION_COL + 12]), // col 127
+        mf_ach_pct:    toNumOrNull(row[ytdCol + 4]),
+        alt_target:    toNumOrNull(row[ytdCol + 5]),
+        alt_ach:       toNumOrNull(row[ytdCol + 6]),
+        alt_ach_pct:   toNumOrNull(row[ytdCol + 7]),
+        consol_target: toNumOrNull(row[ytdCol + 10]),
+        consol_ach:    toNumOrNull(row[ytdCol + 11]),
+        consol_pct:    toNumOrNull(row[ytdCol + 12]),
       });
     }
   }
