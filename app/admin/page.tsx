@@ -1650,10 +1650,13 @@ function GoogleSheetsSyncSection({ showToast }: { showToast: (type: 'success' | 
   const [misSyncing, setMisSyncing] = useState<Record<string, boolean>>({});
   const [misSyncLog, setMisSyncLog] = useState<any[]>([]);
   const [misSyncLogLoading, setMisSyncLogLoading] = useState(true);
+  // Service account email (for sharing instructions)
+  const [serviceEmail, setServiceEmail] = useState<string | null>(null);
+  const [emailCopied, setEmailCopied] = useState(false);
 
   const MIS_SOURCES = [
     { key: 'b2b_mtd', label: 'B2B MTD MIS', endpoint: '/api/admin/sync-b2b?source=b2b_mtd',  color: 'blue',  table: 'b2b_sales_current_month' },
-    { key: 'b2b_ytd', label: 'B2B YTD MIS', endpoint: '/api/admin/sync-b2b?source=b2b_ytd',  color: 'blue',  table: 'btb_sales_YTD_minus_current_month' },
+    { key: 'b2b_ytd', label: 'B2B YTD MIS', endpoint: '/api/admin/sync-b2b?source=b2b_ytd',  color: 'blue',  table: 'b2b_rm_ytd_performance' },
     { key: 'b2c',     label: 'B2C MIS',      endpoint: '/api/admin/sync-b2c',                 color: 'teal',  table: 'b2c' },
   ];
 
@@ -1701,7 +1704,15 @@ function GoogleSheetsSyncSection({ showToast }: { showToast: (type: 'success' | 
     });
   };
 
-  useEffect(() => { loadMisConfigs(); loadMisSyncLog(); }, []);
+  useEffect(() => {
+    loadMisConfigs();
+    loadMisSyncLog();
+    // Fetch service account email for sharing instructions
+    fetch('/api/admin/service-account-info')
+      .then(r => r.json())
+      .then(d => { if (d.client_email) setServiceEmail(d.client_email); })
+      .catch(() => {});
+  }, []);
 
   // Consolidated sheet sync
   const runSync = async (tab?: string) => {
@@ -1809,6 +1820,33 @@ function GoogleSheetsSyncSection({ showToast }: { showToast: (type: 'success' | 
           <h3 className="text-base font-semibold text-gray-800">MIS Sheet Links</h3>
           <span className="text-xs text-gray-400">Auto-sync daily at 3:00 AM UTC</span>
         </div>
+
+        {/* Service account sharing instructions */}
+        {serviceEmail && (
+          <div className="flex items-start gap-3 p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+            <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="font-medium text-amber-800">Share each Google Sheet with this service account email</p>
+              <p className="text-amber-700 text-xs mt-0.5">Open the sheet → Share → paste this email → Viewer access. Do this once per sheet link.</p>
+              <div className="flex items-center gap-2 mt-2">
+                <code className="text-xs bg-white border border-amber-200 rounded px-2 py-1 text-gray-800 font-mono truncate max-w-sm">
+                  {serviceEmail}
+                </code>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(serviceEmail).then(() => {
+                      setEmailCopied(true);
+                      setTimeout(() => setEmailCopied(false), 2000);
+                    });
+                  }}
+                  className="text-xs px-2 py-1 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded border border-amber-200 whitespace-nowrap transition-colors"
+                >
+                  {emailCopied ? '✓ Copied!' : 'Copy'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {misConfigsLoading ? (
           <div className="flex items-center gap-2 text-sm text-gray-400 py-4"><Loader2 className="w-4 h-4 animate-spin" /> Loading configs...</div>
