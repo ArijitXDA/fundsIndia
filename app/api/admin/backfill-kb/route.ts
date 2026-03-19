@@ -18,6 +18,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin }            from '@/lib/supabase';
 import { embedBatch }               from '@/lib/agent/embeddings';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: NextRequest) {
   // ── Simple secret auth ────────────────────────────────────────────────────
   const secret = req.headers.get('x-admin-secret');
