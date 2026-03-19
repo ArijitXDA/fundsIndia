@@ -1774,10 +1774,13 @@ function GoogleSheetsSyncSection({ showToast }: { showToast: (type: 'success' | 
       const result = data[source.key] ?? data.b2c ?? data;
       if (res.ok && result.status === 'success') {
         showToast('success', `${source.label} synced — ${result.synced ?? 0} rows inserted`);
+      } else if (result.status === 'partial') {
+        const firstErr = result.errors?.[0] ?? 'batch error';
+        showToast('error', `${source.label} partial (${result.synced ?? 0}/${result.total ?? 0} rows): ${firstErr}`);
       } else if (result.status === 'skipped') {
         showToast('error', `${source.label} skipped — ${result.message}`);
       } else {
-        showToast('error', `${source.label} ${result.status ?? 'error'}: ${result.error ?? 'Unknown error'}`);
+        showToast('error', `${source.label} error: ${result.error ?? JSON.stringify(result)}`);
       }
       loadMisSyncLog();
     } catch (e: any) {

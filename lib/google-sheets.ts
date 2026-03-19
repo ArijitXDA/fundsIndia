@@ -77,7 +77,9 @@ export async function fetchRawSheetRows(
   tabName: string,
   range = 'A:EE'          // covers ~130 columns
 ): Promise<(string | number | null)[][]> {
-  const url = `${SHEETS_BASE}/${sheetId}/values/${encodeURIComponent(tabName)}!${range}`;
+  // UNFORMATTED_VALUE returns raw numeric values for date/number cells
+  // instead of display strings like "Apr-25" — critical for date serial detection.
+  const url = `${SHEETS_BASE}/${sheetId}/values/${encodeURIComponent(tabName)}!${range}?valueRenderOption=UNFORMATTED_VALUE`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   });

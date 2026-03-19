@@ -203,7 +203,20 @@ function parseYtdSheet(
 
   // ── Determine fiscal year ─────────────────────────────────────────────────
   const apr25Serial = dateRow[colOffset + RM_MONTHLY_SECTION_STARTS[0] + 2] as number;
-  const apr25Date   = new Date(Math.round(((apr25Serial || 45772) - 25569) * 86400 * 1000));
+
+  if (!apr25Serial || typeof apr25Serial !== 'number' || apr25Serial < 40000) {
+    // Date row not found or dates returned as strings (valueRenderOption issue).
+    // Provide a diagnostic sample so the admin can understand the raw data.
+    const dateSample = (dateRow ?? []).slice(0, 10).map(String).join(', ');
+    throw new Error(
+      `Could not find date serial in T vs A_YTD date row ` +
+      `(expected a number > 40000 at column ${colOffset + RM_MONTHLY_SECTION_STARTS[0] + 2}). ` +
+      `Date row sample (first 10 cols): [${dateSample || 'empty'}]. ` +
+      `Ensure fetchRawSheetRows uses valueRenderOption=UNFORMATTED_VALUE.`
+    );
+  }
+
+  const apr25Date   = new Date(Math.round((apr25Serial - 25569) * 86400 * 1000));
   const fyStartYear = apr25Date.getUTCFullYear();                              // e.g. 2025
   const fiscalYear  = `FY${fyStartYear}-${String(fyStartYear + 1).slice(-2)}`; // 'FY2025-26'
 
@@ -211,6 +224,15 @@ function parseYtdSheet(
   const monthPeriods: string[] = RM_MONTHLY_SECTION_STARTS.map((s) =>
     excelSerialToMonthLabel(dateRow[colOffset + s + 2] as number, fyStartYear)
   );
+
+  // Guard: if all periods resolved to '?', date row is wrong — abort to prevent duplicate inserts
+  const validPeriods = monthPeriods.filter(p => p !== '?');
+  if (validPeriods.length === 0) {
+    throw new Error(
+      `All 12 month periods resolved to "?" — date row values could not be parsed as Excel serials. ` +
+      `Date row sample: ${JSON.stringify(dateRow.slice(0, 10))}`
+    );
+  }
 
   // ── Parse RM data rows ────────────────────────────────────────────────────
   const records: YtdRecord[] = [];
