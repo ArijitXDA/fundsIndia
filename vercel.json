@@ -3,6 +3,14 @@
     {
       "path": "/api/admin/sync-sheets",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/admin/sync-b2b",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/admin/sync-b2c",
+      "schedule": "0 3 * * *"
     }
   ]
 }

@@ -1634,11 +1634,30 @@ function ActivityLogSection({ adminTier, showToast }: { adminTier: string; showT
 
 // ── Google Sheets Sync Section ────────────────────────────────────────────────
 function GoogleSheetsSyncSection({ showToast }: { showToast: (type: 'success' | 'error', message: string) => void }) {
+  // ── Consolidated sheet sync (overall_aum + overall_sales) ──────────────────
   const [syncing, setSyncing] = useState<'all' | 'overall_aum' | 'overall_sales' | null>(null);
   const [lastResult, setLastResult] = useState<any>(null);
   const [syncLog, setSyncLog] = useState<any[]>([]);
   const [logLoading, setLogLoading] = useState(true);
 
+  // ── MIS sheet configs ──────────────────────────────────────────────────────
+  const [misConfigs, setMisConfigs] = useState<Record<string, any>>({});
+  const [misConfigsLoading, setMisConfigsLoading] = useState(true);
+  // Per-source edit state: { sheet_url, tab_name, notes }
+  const [editing, setEditing] = useState<Record<string, { sheet_url: string; tab_name: string; notes: string }>>({});
+  const [saving, setSaving] = useState<Record<string, boolean>>({});
+  // Per-source sync state
+  const [misSyncing, setMisSyncing] = useState<Record<string, boolean>>({});
+  const [misSyncLog, setMisSyncLog] = useState<any[]>([]);
+  const [misSyncLogLoading, setMisSyncLogLoading] = useState(true);
+
+  const MIS_SOURCES = [
+    { key: 'b2b_mtd', label: 'B2B MTD MIS', endpoint: '/api/admin/sync-b2b?source=b2b_mtd',  color: 'blue',  table: 'b2b_sales_current_month' },
+    { key: 'b2b_ytd', label: 'B2B YTD MIS', endpoint: '/api/admin/sync-b2b?source=b2b_ytd',  color: 'blue',  table: 'btb_sales_YTD_minus_current_month' },
+    { key: 'b2c',     label: 'B2C MIS',      endpoint: '/api/admin/sync-b2c',                 color: 'teal',  table: 'b2c' },
+  ];
+
+  // Load consolidated sync log
   useEffect(() => {
     fetch('/api/admin/sync-sheets')
       .then(r => r.json())
@@ -1646,6 +1665,45 @@ function GoogleSheetsSyncSection({ showToast }: { showToast: (type: 'success' | 
       .catch(() => setLogLoading(false));
   }, [lastResult]);
 
+  // Load MIS sheet configs
+  const loadMisConfigs = () => {
+    setMisConfigsLoading(true);
+    fetch('/api/admin/sheet-configs')
+      .then(r => r.json())
+      .then(d => {
+        const map: Record<string, any> = {};
+        for (const c of d.configs ?? []) map[c.source_key] = c;
+        setMisConfigs(map);
+        // Initialise edit state from DB values
+        const initEdit: Record<string, any> = {};
+        for (const c of d.configs ?? []) {
+          initEdit[c.source_key] = { sheet_url: c.sheet_url ?? '', tab_name: c.tab_name ?? '', notes: c.notes ?? '' };
+        }
+        setEditing(initEdit);
+        setMisConfigsLoading(false);
+      })
+      .catch(() => setMisConfigsLoading(false));
+  };
+
+  // Load MIS sync log
+  const loadMisSyncLog = () => {
+    setMisSyncLogLoading(true);
+    // Fetch from both B2B and B2C log endpoints and merge
+    Promise.all([
+      fetch('/api/admin/sync-b2b').then(r => r.json()).then(d => d.recent_syncs ?? []).catch(() => []),
+      fetch('/api/admin/sync-b2c').then(r => r.json()).then(d => d.recent_syncs ?? []).catch(() => []),
+    ]).then(([b2b, b2c]) => {
+      const merged = [...b2b, ...b2c].sort((a: any, b: any) =>
+        new Date(b.synced_at).getTime() - new Date(a.synced_at).getTime()
+      );
+      setMisSyncLog(merged.slice(0, 20));
+      setMisSyncLogLoading(false);
+    });
+  };
+
+  useEffect(() => { loadMisConfigs(); loadMisSyncLog(); }, []);
+
+  // Consolidated sheet sync
   const runSync = async (tab?: string) => {
     const key = (tab ?? 'all') as any;
     setSyncing(key);
@@ -1656,7 +1714,7 @@ function GoogleSheetsSyncSection({ showToast }: { showToast: (type: 'success' | 
       setLastResult(data);
       if (res.ok) {
         const parts = [];
-        if (data.overall_aum) parts.push(`AUM: ${data.overall_aum.synced ?? 0} rows`);
+        if (data.overall_aum)   parts.push(`AUM: ${data.overall_aum.synced ?? 0} rows`);
         if (data.overall_sales) parts.push(`Sales: ${data.overall_sales.synced ?? 0} rows`);
         showToast('success', `Sync complete — ${parts.join(', ')}`);
       } else {
@@ -1668,26 +1726,247 @@ function GoogleSheetsSyncSection({ showToast }: { showToast: (type: 'success' | 
     setSyncing(null);
   };
 
+  // Save MIS sheet config for one source
+  const saveConfig = async (sourceKey: string) => {
+    setSaving(s => ({ ...s, [sourceKey]: true }));
+    try {
+      const ed = editing[sourceKey] ?? {};
+      const res = await fetch('/api/admin/sheet-configs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_key: sourceKey,
+          sheet_url:  ed.sheet_url,
+          tab_name:   ed.tab_name,
+          notes:      ed.notes,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast('success', `${sourceKey} config saved. Sheet ID: ${data.extracted_sheet_id ?? '—'}`);
+        loadMisConfigs();
+      } else {
+        showToast('error', data.error ?? 'Save failed');
+      }
+    } catch (e: any) {
+      showToast('error', e.message ?? 'Save failed');
+    }
+    setSaving(s => ({ ...s, [sourceKey]: false }));
+  };
+
+  // Trigger MIS sync for one source
+  const runMisSync = async (source: typeof MIS_SOURCES[0]) => {
+    setMisSyncing(s => ({ ...s, [source.key]: true }));
+    try {
+      const res = await fetch(source.endpoint, { method: 'POST' });
+      const data = await res.json();
+      const result = data[source.key] ?? data.b2c ?? data;
+      if (res.ok && result.status === 'success') {
+        showToast('success', `${source.label} synced — ${result.synced ?? 0} rows inserted`);
+      } else if (result.status === 'skipped') {
+        showToast('error', `${source.label} skipped — ${result.message}`);
+      } else {
+        showToast('error', `${source.label} ${result.status ?? 'error'}: ${result.error ?? 'Unknown error'}`);
+      }
+      loadMisSyncLog();
+    } catch (e: any) {
+      showToast('error', e.message ?? 'Sync failed');
+    }
+    setMisSyncing(s => ({ ...s, [source.key]: false }));
+  };
+
   const fmtDate = (iso: string) => {
     try { return new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); }
     catch { return iso; }
   };
 
+  const statusBadge = (status: string) => (
+    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+      status === 'success' ? 'bg-green-100 text-green-700' :
+      status === 'partial' ? 'bg-yellow-100 text-yellow-700' :
+      status === 'skipped' ? 'bg-gray-100 text-gray-500' :
+      'bg-red-100 text-red-700'
+    }`}>{status}</span>
+  );
+
   return (
-    <div className="p-6 max-w-3xl space-y-6">
+    <div className="p-6 max-w-3xl space-y-8">
+
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div>
         <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
           <Sheet className="w-5 h-5 text-green-600" />
           Google Sheets Sync
         </h2>
         <p className="text-sm text-gray-500 mt-1">
-          Syncs <strong>overall_aum</strong> and <strong>overall_sales</strong> tabs from the FI Consolidated Data sheet into Supabase.
-          Runs automatically every day at 2:00 AM via Vercel cron.
+          Manage Google Sheet connections for all MIS data sources. Sheet URLs change monthly — paste the new URL here and the system updates automatically.
         </p>
       </div>
 
+      {/* ── MIS Sheet Configs ───────────────────────────────────────────────── */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold text-gray-800">MIS Sheet Links</h3>
+          <span className="text-xs text-gray-400">Auto-sync daily at 3:00 AM UTC</span>
+        </div>
+
+        {misConfigsLoading ? (
+          <div className="flex items-center gap-2 text-sm text-gray-400 py-4"><Loader2 className="w-4 h-4 animate-spin" /> Loading configs...</div>
+        ) : (
+          MIS_SOURCES.map(source => {
+            const config = misConfigs[source.key] ?? {};
+            const ed = editing[source.key] ?? { sheet_url: '', tab_name: '', notes: '' };
+            const isActive = !!config.sheet_id && config.is_active;
+            const isSyncing = misSyncing[source.key];
+            const isSaving  = saving[source.key];
+            const hasChanges = ed.sheet_url !== (config.sheet_url ?? '') ||
+                               ed.tab_name  !== (config.tab_name  ?? '') ||
+                               ed.notes     !== (config.notes     ?? '');
+
+            return (
+              <div key={source.key} className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+                {/* Source header */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FileSpreadsheet className="w-4 h-4 text-gray-400" />
+                    <span className="font-medium text-gray-800 text-sm">{source.label}</span>
+                    <span className="text-xs text-gray-400">→ {source.table}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isActive ? (
+                      <span className="flex items-center gap-1 px-2 py-0.5 bg-green-50 text-green-700 text-xs rounded-full border border-green-200">
+                        <CheckCircle className="w-3 h-3" /> Active
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-700 text-xs rounded-full border border-amber-200">
+                        <AlertTriangle className="w-3 h-3" /> Not configured
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Sheet URL input */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-medium text-gray-600">
+                    Google Sheet URL <span className="text-gray-400 font-normal">(paste full URL — sheet ID is extracted automatically)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={ed.sheet_url}
+                    onChange={e => setEditing(prev => ({ ...prev, [source.key]: { ...ed, sheet_url: e.target.value } }))}
+                    placeholder="https://docs.google.com/spreadsheets/d/..."
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 font-mono text-gray-700"
+                  />
+                  {config.sheet_id && (
+                    <p className="text-xs text-gray-400">
+                      Current sheet ID: <span className="font-mono text-gray-600">{config.sheet_id}</span>
+                      {config.updated_at && <span className="ml-2">· Last updated {fmtDate(config.updated_at)} by {config.updated_by ?? '—'}</span>}
+                    </p>
+                  )}
+                </div>
+
+                {/* Tab name + notes */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="block text-xs font-medium text-gray-600">Tab name</label>
+                    <input
+                      type="text"
+                      value={ed.tab_name}
+                      onChange={e => setEditing(prev => ({ ...prev, [source.key]: { ...ed, tab_name: e.target.value } }))}
+                      placeholder={source.key === 'b2b_mtd' ? 'Final Net Sales' : 'Sheet1'}
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-xs font-medium text-gray-600">Note (optional)</label>
+                    <input
+                      type="text"
+                      value={ed.notes}
+                      onChange={e => setEditing(prev => ({ ...prev, [source.key]: { ...ed, notes: e.target.value } }))}
+                      placeholder="e.g. March 2026"
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                    />
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center gap-3 pt-1">
+                  <button
+                    onClick={() => saveConfig(source.key)}
+                    disabled={isSaving || !hasChanges}
+                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-xs font-medium rounded-lg transition-colors"
+                  >
+                    {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                    {isSaving ? 'Saving…' : hasChanges ? 'Save Link' : 'Saved'}
+                  </button>
+                  <button
+                    onClick={() => runMisSync(source)}
+                    disabled={isSyncing || !isActive}
+                    title={!isActive ? 'Save a sheet URL first to enable sync' : ''}
+                    className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white text-xs font-medium rounded-lg transition-colors"
+                  >
+                    {isSyncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                    {isSyncing ? 'Syncing…' : 'Sync Now'}
+                  </button>
+                  {config.sheet_url && (
+                    <a
+                      href={config.sheet_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-indigo-600 hover:underline ml-auto"
+                    >
+                      Open sheet ↗
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* ── MIS Sync Log ───────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-gray-700">MIS Sync Log</h3>
+          <button onClick={loadMisSyncLog} className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
+            <RefreshCw className="w-3 h-3" /> Refresh
+          </button>
+        </div>
+        {misSyncLogLoading ? (
+          <div className="flex items-center gap-2 text-sm text-gray-400"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+        ) : misSyncLog.length === 0 ? (
+          <p className="text-sm text-gray-400">No MIS syncs yet — configure a sheet URL above and click Sync Now.</p>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {misSyncLog.map((log: any) => (
+              <div key={log.id} className="py-2.5 flex items-center justify-between text-sm">
+                <div>
+                  <span className="font-medium text-gray-800">
+                    {log.source_key === 'b2b_mtd' ? 'B2B MTD' : log.source_key === 'b2b_ytd' ? 'B2B YTD' : 'B2C'}
+                  </span>
+                  {log.sheet_tab && <span className="ml-1.5 text-gray-400 text-xs">({log.sheet_tab})</span>}
+                  <span className="ml-2 text-gray-400 text-xs">{fmtDate(log.synced_at)}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-gray-500 text-xs">{log.rows_synced}/{log.rows_total} rows</span>
+                  {statusBadge(log.status)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Divider ─────────────────────────────────────────────────────────── */}
+      <div className="border-t border-gray-100 pt-2">
+        <h3 className="text-base font-semibold text-gray-800 mb-1">FI Consolidated Data Sheet</h3>
+        <p className="text-xs text-gray-400 mb-4">Syncs overall AUM and overall sales from the fixed FI master sheet. Auto-runs at 2:00 AM UTC daily.</p>
+      </div>
+
+      {/* ── Consolidated sheet manual sync ─────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
-        <h3 className="text-sm font-semibold text-gray-700">Manual Sync</h3>
+        <h3 className="text-sm font-semibold text-gray-700">Manual Sync — FI Consolidated</h3>
         <div className="flex flex-wrap gap-3">
           <button
             onClick={() => runSync()}
@@ -1747,7 +2026,7 @@ function GoogleSheetsSyncSection({ showToast }: { showToast: (type: 'success' | 
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 p-5">
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">Recent Sync Log</h3>
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">Recent Sync Log — FI Consolidated</h3>
         {logLoading ? (
           <div className="flex items-center gap-2 text-sm text-gray-400"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>
         ) : syncLog.length === 0 ? (
@@ -1762,11 +2041,7 @@ function GoogleSheetsSyncSection({ showToast }: { showToast: (type: 'success' | 
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-gray-500">{log.rows_synced}/{log.rows_total} rows</span>
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                    log.status === 'success' ? 'bg-green-100 text-green-700' :
-                    log.status === 'partial' ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-red-100 text-red-700'
-                  }`}>{log.status}</span>
+                  {statusBadge(log.status)}
                 </div>
               </div>
             ))}
