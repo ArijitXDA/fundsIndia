@@ -1,18 +1,21 @@
 // POST /api/admin/sync-b2b
 // Syncs B2B MIS data from Google Sheets into Supabase.
 //
-//   b2b_mtd → b2b_sales_current_month      (tab stored in sheet_sync_configs: 'b2b_mtd')
-//   b2b_ytd → btb_sales_YTD_minus_current_month (tab stored in sheet_sync_configs: 'b2b_ytd')
+//   b2b_mtd → b2b_sales_current_month
+//             Source: "Final Net Sales" tab (partner/ARN-level MTD sales)
+//             Strategy: DELETE + INSERT (same as Excel upload)
 //
-// The Google Sheet URL/ID is configured per-month by the admin in the admin panel.
-// Called automatically by Vercel cron (daily 3 AM UTC) or manually via "Sync Now" button.
+//   b2b_ytd → b2b_rm_ytd_performance
+//             Source: "T vs A_YTD" tab (RM-level monthly + YTD target vs achievement)
+//             Strategy: DELETE + INSERT
+//             Produces 13 rows per RM (12 months Apr–Mar + 1 YTD row)
 //
-// Sync strategy: DESTRUCTIVE (DELETE all → INSERT new), matching existing Excel upload behaviour.
-// Safety guard: if 0 rows fetched from sheet, sync is aborted — table is NOT cleared.
+// Google Sheet URL/ID configured per-month by admin in the admin panel.
+// Called automatically by Vercel cron (daily 3 AM UTC) or manually.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
-import { getGoogleAccessToken, fetchSheetRows } from '@/lib/google-sheets';
+import { getGoogleAccessToken, fetchSheetRows, fetchRawSheetRows } from '@/lib/google-sheets';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -42,12 +45,18 @@ function toNum(v: any): number {
   return isNaN(n) ? 0 : n;
 }
 
+function toNumOrNull(v: any): number | null {
+  if (v === null || v === undefined || v === '' || v === '#N/A') return null;
+  const n = parseFloat(String(v).replace(/,/g, ''));
+  return isNaN(n) ? null : n;
+}
+
 function toStr(v: any): string {
   return String(v ?? '').trim();
 }
 
-// ── Column mappers ─────────────────────────────────────────────────────────────
-// Column names match the "Final Net Sales" tab exactly — same as Excel upload route.
+// ── B2B MTD column mapper ─────────────────────────────────────────────────────
+// Matches "Final Net Sales" tab headers exactly (same as Excel upload route).
 
 function mapB2bMtdRow(row: Record<string, string>) {
   return {
@@ -73,83 +82,222 @@ function mapB2bMtdRow(row: Record<string, string>) {
   };
 }
 
-// YTD column mapping — matches btb_sales_YTD_minus_current_month schema
-// Column names from the B2B YTD Google Sheet tab
-function mapB2bYtdRow(row: Record<string, string>) {
-  return {
-    'Arn':                             toStr(row['Arn']),
-    'Partner Name':                    toStr(row['Partner Name']),
-    'MF+SIF+MSCI':                     toNum(row['MF+SIF+MSCI']),
-    'SUM of COB (100%)':               toNum(row['SUM of COB (100%)']),
-    'COB (50%)':                       toNum(row['COB (50%)']),
-    'SUM of AIF+PMS+LAS (TRAIL)':      toNum(row['SUM of AIF+PMS+LAS (TRAIL)']),
-    'MF Total (COB 100%)':             toNum(row['MF Total (COB 100%)']),
-    'MF Total (COB 50%)':              toNum(row['MF Total (COB 50%)']),
-    'SUM of ALT':                      toNum(row['SUM of ALT']),
-    'ALT Total':                       toNum(row['ALT Total']),
-    'Total Net Sales (COB 100%)':      toNum(row['Total Net Sales (COB 100%)']),
-    'Total Net Sales (COB 50%)':       toNum(row['Total Net Sales (COB 50%)']),
-    'RM':                              toStr(row['RM']),
-    'BM':                              toStr(row['BM']),
-    'Branch':                          toStr(row['Branch']),
-    'Zone':                            toStr(row['Zone']),
-    'RGM':                             toStr(row['RGM']),
-    'ZM':                              toStr(row['ZM']),
-    'RM Emp ID':                       toStr(row['RM Emp ID']),
-  };
+// ── B2B YTD parser ─────────────────────────────────────────────────────────────
+// Parses the "T vs A_YTD" tab which is a side-by-side pivot with 130 columns:
+//   - 12 monthly sections (Apr→Mar), each 9 cols wide
+//   - A YTD total section at cols 115–127
+//   - 4 entity-level blocks stacked vertically: ZM, RGM, BM, RM
+//
+// We extract ONLY the RM block (the bottom block, largest), producing one row
+// per RM per period (12 monthly + 1 YTD = 13 rows per RM).
+//
+// Monthly section column layout (for RM block, s = section start col):
+//   s+0: RM name    s+1: MF Target    s+2: MF Ach (COB 50%)
+//   s+3: % MF Ach   s+4: ALT Target   s+5: ALT Ach   s+6: % ALT Ach
+//
+// YTD section (starts at col 115):
+//   115: RM name   116: Branch   117: MF Target   118: MF Ach (COB 50%)
+//   119: % MF Ach  120: ALT Target  121: ALT Ach  122: % ALT Ach
+//   125: Consol Target  126: Consol Achievement  127: Consol % Ach
+
+// Column start index for each of the 12 monthly sections within the RM block
+const RM_MONTHLY_SECTION_STARTS = [0, 9, 18, 27, 37, 47, 57, 67, 77, 87, 97, 106];
+const YTD_SECTION_COL            = 115;
+
+// Build period label from the Excel serial date stored in row 2 (date row).
+// The sheet stores Apr→Dec with correct year, but Jan/Feb/Mar get stored as
+// previous-calendar-year (a known Excel artifact in this file). We correct
+// by adding 1 year to months 1–3 (Jan/Feb/Mar) when the FY starts in April.
+function excelSerialToMonthLabel(
+  serial: number | null,
+  fyStartYear: number   // e.g. 2025 for FY2025-26
+): string {
+  if (!serial || typeof serial !== 'number') return '?';
+  // Excel epoch = Dec 30 1899. Convert to JS Date.
+  const d = new Date(Math.round((serial - 25569) * 86400 * 1000));
+  const m = d.getUTCMonth(); // 0=Jan … 11=Dec
+  // Months Jan(0), Feb(1), Mar(2) are the tail-end of a Apr–Mar fiscal year
+  const year = m <= 2 ? fyStartYear + 1 : fyStartYear;
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${monthNames[m]}-${String(year).slice(-2)}`;
 }
 
-// ── Core sync function ────────────────────────────────────────────────────────
+interface YtdRecord {
+  rm_name: string;
+  branch: string | null;
+  period: string;
+  fiscal_year: string;
+  mf_target: number | null;
+  mf_ach_cob50: number | null;
+  mf_ach_pct: number | null;
+  alt_target: number | null;
+  alt_ach: number | null;
+  alt_ach_pct: number | null;
+  consol_target: number | null;
+  consol_ach: number | null;
+  consol_pct: number | null;
+}
 
-async function syncMisTable(opts: {
-  token: string;
-  sourceKey: 'b2b_mtd' | 'b2b_ytd';
-  config: { sheet_id: string; tab_name: string; display_name: string };
-  tableName: string;
-  mapRow: (row: Record<string, string>) => Record<string, any>;
-  filterRow: (row: Record<string, any>) => boolean;
-}): Promise<{ synced: number; total: number; errors: string[] }> {
-  const { token, config, tableName, mapRow, filterRow } = opts;
+function parseYtdSheet(
+  raw: (string | number | null)[][]
+): { records: YtdRecord[]; fiscalYear: string; rmCount: number } {
+  if (raw.length < 3) return { records: [], fiscalYear: 'unknown', rmCount: 0 };
 
-  // Fetch rows from Google Sheet
-  const rawRows = await fetchSheetRows(token, config.sheet_id, config.tab_name);
+  const dateRow = raw[1] ?? [];   // row 2 (index 1): Excel serial dates
 
-  if (rawRows.length === 0) {
-    throw new Error(`Sheet returned 0 rows — aborting to protect existing data. Check tab name "${config.tab_name}" and sheet access.`);
-  }
+  // Determine fiscal year from section 1's date (Apr of the FY)
+  const apr25Serial = dateRow[RM_MONTHLY_SECTION_STARTS[0] + 2] as number;
+  const apr25Date   = new Date(Math.round((apr25Serial - 25569) * 86400 * 1000));
+  const fyStartYear = apr25Date.getUTCFullYear();                            // e.g. 2025
+  const fiscalYear  = `FY${fyStartYear}-${String(fyStartYear + 1).slice(-2)}`; // 'FY2025-26'
 
-  const rows = rawRows.map(mapRow).filter(filterRow);
-  const total = rows.length;
-  const errors: string[] = [];
-  let synced = 0;
+  // Build period labels for each monthly section
+  const monthPeriods: string[] = RM_MONTHLY_SECTION_STARTS.map((s) =>
+    excelSerialToMonthLabel(dateRow[s + 2] as number, fyStartYear)
+  );
 
-  // Safety check: refuse to wipe if mapping produced 0 valid rows
-  if (total === 0) {
-    throw new Error(`Column mapping produced 0 valid rows from ${rawRows.length} raw rows — check that column headers match expected format.`);
-  }
+  // Find the RM block header row (col 0 === 'RM')
+  const rmHeaderIdx = raw.findIndex(row => row && String(row[0] ?? '').trim() === 'RM');
+  if (rmHeaderIdx < 0) throw new Error('Could not find RM block header in T vs A_YTD sheet');
 
-  // DELETE all existing records
-  const { error: deleteError } = await supabaseAdmin
-    .from(tableName)
-    .delete()
-    .neq('Arn', '__never__'); // matches all rows
+  const records: YtdRecord[] = [];
+  const skipPrefixes = ['*', 'Incl', 'Note', 'ZM', 'RGM', 'BM', 'RM'];
 
-  if (deleteError) {
-    throw new Error(`Failed to clear ${tableName}: ${deleteError.message}`);
-  }
+  for (let i = rmHeaderIdx + 1; i < raw.length; i++) {
+    const row = raw[i] ?? [];
 
-  // INSERT in batches
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const batch = rows.slice(i, i + BATCH_SIZE);
-    const { error } = await supabaseAdmin.from(tableName).insert(batch);
-    if (error) {
-      errors.push(`Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${error.message}`);
-    } else {
-      synced += batch.length;
+    // Skip empty rows
+    if (!row.some(v => v !== null && v !== undefined && v !== '')) continue;
+
+    const rmName = toStr(row[0]);
+    // Skip header repeats, notes, empty name rows
+    if (!rmName) continue;
+    if (skipPrefixes.some(p => rmName.startsWith(p))) continue;
+
+    const branch = toStr(row[YTD_SECTION_COL + 1]) || null; // col 116
+
+    // ── 12 monthly records ────────────────────────────────────────────────────
+    for (let mi = 0; mi < RM_MONTHLY_SECTION_STARTS.length; mi++) {
+      const s      = RM_MONTHLY_SECTION_STARTS[mi];
+      const period = monthPeriods[mi];
+      // Only emit a monthly record if there's any meaningful data (not all zero)
+      const mfAch  = toNumOrNull(row[s + 2]);
+      const altAch = toNumOrNull(row[s + 5]);
+      const mfTgt  = toNumOrNull(row[s + 1]);
+      if (mfTgt === null && mfAch === null && altAch === null) continue;
+
+      records.push({
+        rm_name:       rmName,
+        branch,
+        period,
+        fiscal_year:   fiscalYear,
+        mf_target:     mfTgt,
+        mf_ach_cob50:  mfAch,
+        mf_ach_pct:    toNumOrNull(row[s + 3]),
+        alt_target:    toNumOrNull(row[s + 4]),
+        alt_ach:       altAch,
+        alt_ach_pct:   toNumOrNull(row[s + 6]),
+        consol_target: null,
+        consol_ach:    null,
+        consol_pct:    null,
+      });
+    }
+
+    // ── YTD record ────────────────────────────────────────────────────────────
+    const ytdMfTgt = toNumOrNull(row[YTD_SECTION_COL + 2]); // col 117
+    const ytdMfAch = toNumOrNull(row[YTD_SECTION_COL + 3]); // col 118
+    if (ytdMfTgt !== null || ytdMfAch !== null) {
+      records.push({
+        rm_name:       rmName,
+        branch,
+        period:        'YTD',
+        fiscal_year:   fiscalYear,
+        mf_target:     ytdMfTgt,
+        mf_ach_cob50:  ytdMfAch,
+        mf_ach_pct:    toNumOrNull(row[YTD_SECTION_COL + 4]),  // col 119
+        alt_target:    toNumOrNull(row[YTD_SECTION_COL + 5]),  // col 120
+        alt_ach:       toNumOrNull(row[YTD_SECTION_COL + 6]),  // col 121
+        alt_ach_pct:   toNumOrNull(row[YTD_SECTION_COL + 7]),  // col 122
+        consol_target: toNumOrNull(row[YTD_SECTION_COL + 10]), // col 125
+        consol_ach:    toNumOrNull(row[YTD_SECTION_COL + 11]), // col 126
+        consol_pct:    toNumOrNull(row[YTD_SECTION_COL + 12]), // col 127
+      });
     }
   }
 
-  return { synced, total, errors };
+  const rmCount = new Set(records.map(r => r.rm_name)).size;
+  return { records, fiscalYear, rmCount };
+}
+
+// ── Core MTD sync (simple header-keyed fetch) ─────────────────────────────────
+
+async function syncB2bMtd(
+  token: string,
+  config: { sheet_id: string; tab_name: string }
+): Promise<{ synced: number; total: number; errors: string[] }> {
+  const rawRows = await fetchSheetRows(token, config.sheet_id, config.tab_name);
+
+  if (rawRows.length === 0) {
+    throw new Error(`Sheet returned 0 rows — aborting. Check tab name "${config.tab_name}" and sheet access.`);
+  }
+
+  const rows = rawRows.map(mapB2bMtdRow).filter(r => r['Arn'] && r['Arn'] !== '');
+  if (rows.length === 0) {
+    throw new Error(`0 valid rows after mapping — check column headers match "Final Net Sales" format.`);
+  }
+
+  const { error: deleteError } = await supabaseAdmin
+    .from('b2b_sales_current_month')
+    .delete()
+    .neq('Arn', '__never__');
+  if (deleteError) throw new Error(`Failed to clear b2b_sales_current_month: ${deleteError.message}`);
+
+  const errors: string[] = [];
+  let synced = 0;
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const { error } = await supabaseAdmin.from('b2b_sales_current_month').insert(rows.slice(i, i + BATCH_SIZE));
+    if (error) errors.push(`Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${error.message}`);
+    else synced += Math.min(BATCH_SIZE, rows.length - i);
+  }
+
+  return { synced, total: rows.length, errors };
+}
+
+// ── Core YTD sync (raw row fetch + pivot parser) ──────────────────────────────
+
+async function syncB2bYtd(
+  token: string,
+  config: { sheet_id: string; tab_name: string }
+): Promise<{ synced: number; total: number; rmCount: number; fiscalYear: string; errors: string[] }> {
+  const rawRows = await fetchRawSheetRows(token, config.sheet_id, config.tab_name);
+
+  if (rawRows.length === 0) {
+    throw new Error(`Sheet returned 0 rows — aborting. Check tab name "${config.tab_name}" and sheet access.`);
+  }
+
+  const { records, fiscalYear, rmCount } = parseYtdSheet(rawRows);
+
+  if (records.length === 0) {
+    throw new Error(`Parsed 0 records from ${rawRows.length} raw rows — check the sheet has RM data in "T vs A_YTD" format.`);
+  }
+
+  // DELETE all (full replace on each sync)
+  const { error: deleteError } = await supabaseAdmin
+    .from('b2b_rm_ytd_performance')
+    .delete()
+    .neq('rm_name', '__never__');
+  if (deleteError) throw new Error(`Failed to clear b2b_rm_ytd_performance: ${deleteError.message}`);
+
+  const errors: string[] = [];
+  let synced = 0;
+  for (let i = 0; i < records.length; i += BATCH_SIZE) {
+    const { error } = await supabaseAdmin.from('b2b_rm_ytd_performance').insert(records.slice(i, i + BATCH_SIZE));
+    if (error) errors.push(`Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${error.message}`);
+    else synced += Math.min(BATCH_SIZE, records.length - i);
+  }
+
+  return { synced, total: records.length, rmCount, fiscalYear, errors };
 }
 
 // ── GET — return recent sync log ──────────────────────────────────────────────
@@ -196,7 +344,7 @@ export async function POST(request: NextRequest) {
   const configMap: Record<string, any> = {};
   for (const c of configs ?? []) configMap[c.source_key] = c;
 
-  // Get Google OAuth token once (reuse for both syncs)
+  // Get Google OAuth token once (reused for both syncs)
   let token: string;
   try {
     token = await getGoogleAccessToken();
@@ -212,7 +360,7 @@ export async function POST(request: NextRequest) {
       const msg = !config?.sheet_id
         ? 'No sheet URL configured — go to Admin → Google Sheets Sync → B2B MTD MIS and paste the sheet URL.'
         : !config?.is_active
-        ? 'B2B MTD sync is marked inactive in sheet_sync_configs.'
+        ? 'B2B MTD sync is marked inactive.'
         : 'No tab name configured for B2B MTD.';
 
       results.b2b_mtd = { status: 'skipped', message: msg };
@@ -222,28 +370,15 @@ export async function POST(request: NextRequest) {
       });
     } else {
       try {
-        const r = await syncMisTable({
-          token,
-          sourceKey: 'b2b_mtd',
-          config,
-          tableName: 'b2b_sales_current_month',
-          mapRow: mapB2bMtdRow,
-          filterRow: (row) => !!row['Arn'] && row['Arn'] !== '',
-        });
-
+        const r = await syncB2bMtd(token, config);
         results.b2b_mtd = {
           status: r.errors.length > 0 ? 'partial' : 'success',
-          synced: r.synced,
-          total: r.total,
-          tab: config.tab_name,
+          synced: r.synced, total: r.total, tab: config.tab_name,
           errors: r.errors.length > 0 ? r.errors.slice(0, 5) : undefined,
         };
-
         await supabaseAdmin.from('mis_sync_log').insert({
-          source_key: 'b2b_mtd',
-          sheet_tab: config.tab_name,
-          rows_synced: r.synced,
-          rows_total: r.total,
+          source_key: 'b2b_mtd', sheet_tab: config.tab_name,
+          rows_synced: r.synced, rows_total: r.total,
           status: r.errors.length > 0 ? 'partial' : 'success',
           error_msg: r.errors.length > 0 ? r.errors.join('; ') : null,
         });
@@ -265,7 +400,7 @@ export async function POST(request: NextRequest) {
       const msg = !config?.sheet_id
         ? 'No sheet URL configured for B2B YTD — paste the URL in Admin → Google Sheets Sync.'
         : !config?.tab_name
-        ? 'No tab name configured for B2B YTD.'
+        ? 'No tab name configured for B2B YTD (expected: T vs A_YTD).'
         : 'B2B YTD sync is marked inactive.';
 
       results.b2b_ytd = { status: 'skipped', message: msg };
@@ -275,28 +410,17 @@ export async function POST(request: NextRequest) {
       });
     } else {
       try {
-        const r = await syncMisTable({
-          token,
-          sourceKey: 'b2b_ytd',
-          config,
-          tableName: 'btb_sales_YTD_minus_current_month',
-          mapRow: mapB2bYtdRow,
-          filterRow: (row) => !!row['Arn'] && row['Arn'] !== '',
-        });
-
+        const r = await syncB2bYtd(token, config);
         results.b2b_ytd = {
           status: r.errors.length > 0 ? 'partial' : 'success',
-          synced: r.synced,
-          total: r.total,
+          synced: r.synced, total: r.total,
+          rm_count: r.rmCount, fiscal_year: r.fiscalYear,
           tab: config.tab_name,
           errors: r.errors.length > 0 ? r.errors.slice(0, 5) : undefined,
         };
-
         await supabaseAdmin.from('mis_sync_log').insert({
-          source_key: 'b2b_ytd',
-          sheet_tab: config.tab_name,
-          rows_synced: r.synced,
-          rows_total: r.total,
+          source_key: 'b2b_ytd', sheet_tab: config.tab_name,
+          rows_synced: r.synced, rows_total: r.total,
           status: r.errors.length > 0 ? 'partial' : 'success',
           error_msg: r.errors.length > 0 ? r.errors.join('; ') : null,
         });

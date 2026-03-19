@@ -1873,7 +1873,10 @@ function GoogleSheetsSyncSection({ showToast }: { showToast: (type: 'success' | 
                       type="text"
                       value={ed.tab_name}
                       onChange={e => setEditing(prev => ({ ...prev, [source.key]: { ...ed, tab_name: e.target.value } }))}
-                      placeholder={source.key === 'b2b_mtd' ? 'Final Net Sales' : 'Sheet1'}
+                      placeholder={
+                        source.key === 'b2b_mtd' ? 'Final Net Sales' :
+                        source.key === 'b2b_ytd' ? 'T vs A_YTD' : 'Sheet1'
+                      }
                       className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
                     />
                   </div>

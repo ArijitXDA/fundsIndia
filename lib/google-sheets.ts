@@ -67,6 +67,31 @@ export async function getGoogleAccessToken(): Promise<string> {
   return tokenData.access_token;
 }
 
+// ── Fetch raw 2D array from a sheet tab ───────────────────────────────────────
+// Returns rows as string[][] without any header-keying.
+// Use this for sheets with complex/multi-row headers (e.g. T vs A_YTD).
+
+export async function fetchRawSheetRows(
+  token: string,
+  sheetId: string,
+  tabName: string,
+  range = 'A:EE'          // covers ~130 columns
+): Promise<(string | number | null)[][]> {
+  const url = `${SHEETS_BASE}/${sheetId}/values/${encodeURIComponent(tabName)}!${range}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  const data = await res.json();
+  if (data.error) {
+    throw new Error(`Sheets API error: ${data.error.message} (${data.error.code})`);
+  }
+
+  const rows: (string | number | null)[][] = data.values ?? [];
+  // Normalise: convert empty strings to null
+  return rows.map(row => row.map(cell => (cell === '' ? null : cell)));
+}
+
 // ── Fetch all rows from a sheet tab ──────────────────────────────────────────
 // Returns array of objects keyed by the header row (row 1).
 // Empty string values are converted to null.
