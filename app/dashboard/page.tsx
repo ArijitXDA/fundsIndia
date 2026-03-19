@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { TrendingUp, Award, BarChart3, Trophy, Medal, Crown, Building2, Users, Network, KeyRound, CheckCircle, Shield, LogOut, UserCheck, Globe, ChevronLeft, ChevronRight } from 'lucide-react';
+import { TrendingUp, Award, BarChart3, Trophy, Medal, Crown, Building2, Users, Network, KeyRound, CheckCircle, Shield, LogOut, UserCheck, Globe, ChevronLeft, ChevronRight, Star, Loader2 } from 'lucide-react';
 import OrgChartModal from '@/components/OrgChartModal';
 import AgentWidget from '@/components/AgentWidget';
 
@@ -28,7 +28,7 @@ interface B2CAdvisor {
   newSIPInflowYTD: string;
 }
 
-type TabType = 'B2B' | 'B2C' | 'PW';
+type TabType = 'B2B' | 'B2C' | 'PW' | 'HOF';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -46,6 +46,9 @@ export default function DashboardPage() {
   const [passwordResetToast, setPasswordResetToast] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [b2bPage, setB2bPage] = useState(1);
   const [b2cPage, setB2cPage] = useState(1);
+  const [hofData, setHofData] = useState<any>(null);
+  const [hofLoading, setHofLoading] = useState(false);
+  const [hofSegment, setHofSegment] = useState<'B2B' | 'B2C'>('B2B');
   const PAGE_SIZE = 10;
 
   useEffect(() => {
@@ -63,6 +66,7 @@ export default function DashboardPage() {
         // Set default tab based on user's business unit
         if (data.user.employee?.business_unit === 'B2C') {
           setActiveTab('B2C');
+          setHofSegment('B2C');
         }
 
         // Fetch B2B sales data
@@ -74,6 +78,14 @@ export default function DashboardPage() {
         const b2cResponse = await fetch('/api/b2c-summary');
         const b2cData = await b2cResponse.json();
         setB2cData(b2cData);
+
+        // Fetch CEO's Club HOF data
+        setHofLoading(true);
+        fetch('/api/hof/ceos-club')
+          .then(r => r.ok ? r.json() : null)
+          .then(d => { if (d) setHofData(d); })
+          .catch(() => {})
+          .finally(() => setHofLoading(false));
 
         // Fetch current user's performance (handles direct, manager, non-sales)
         try {
@@ -160,19 +172,23 @@ export default function DashboardPage() {
   };
 
   // Filter tabs based on user's business unit
-  const allTabs = [
+  const segmentTabs = [
     { id: 'B2B' as TabType, name: 'B2B', icon: Building2, description: 'Business to Business', businessUnit: 'B2B' },
     { id: 'B2C' as TabType, name: 'B2C', icon: Users, description: 'Digital Advisory', businessUnit: 'B2C' },
     { id: 'PW' as TabType, name: 'Private Wealth', icon: Award, description: 'Private Wealth', businessUnit: 'Private Wealth' },
   ];
 
+  const hofTab = { id: 'HOF' as TabType, name: "CEO's Club", icon: Star, description: 'Hall of Fame', businessUnit: '' };
+
   const userBusinessUnit = user?.employee?.business_unit;
 
-  // B2B/B2C/Private Wealth users see only their tab
-  // All other business units see all 3 tabs
-  const tabs = ['B2B', 'B2C', 'Private Wealth'].includes(userBusinessUnit)
-    ? allTabs.filter(tab => tab.businessUnit === userBusinessUnit)
-    : allTabs;
+  // B2B/B2C/Private Wealth users see only their segment tab + HOF
+  // All other business units see all segment tabs + HOF
+  const visibleSegmentTabs = ['B2B', 'B2C', 'Private Wealth'].includes(userBusinessUnit)
+    ? segmentTabs.filter(tab => tab.businessUnit === userBusinessUnit)
+    : segmentTabs;
+
+  const tabs = [...visibleSegmentTabs, hofTab];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
@@ -1082,6 +1098,168 @@ export default function DashboardPage() {
               </div>
             </div>
           )}
+
+          {/* ── CEO's Club / Hall of Fame Tab ── */}
+          {activeTab === 'HOF' && (() => {
+            const hasB2B = hofData?.b2b !== null && hofData?.b2b !== undefined;
+            const hasB2C = hofData?.b2c !== null && hofData?.b2c !== undefined;
+            const showBothSegments = hasB2B && hasB2C;
+            const activeHofRows: any[] = hofSegment === 'B2B' ? (hofData?.b2b ?? []) : (hofData?.b2c ?? []);
+            const quarter = hofData?.quarter;
+            const clubRows = activeHofRows.filter((r: any) => r.is_ceos_club);
+            const nonClubRows = activeHofRows.filter((r: any) => !r.is_ceos_club);
+
+            return (
+              <div>
+                {/* Header */}
+                <div className="bg-gradient-to-r from-amber-500 via-yellow-500 to-orange-500 px-8 py-6">
+                  <div className="flex items-center justify-between flex-wrap gap-4">
+                    <div className="flex items-center space-x-3">
+                      <Crown className="w-9 h-9 text-white drop-shadow" />
+                      <div>
+                        <h2 className="text-2xl font-bold text-white">CEO&apos;s Club</h2>
+                        <p className="text-yellow-100 text-sm mt-0.5">
+                          {quarter ? `${quarter.quarter_label} · Top 20% by % of target achieved` : 'Quarterly Rankings'}
+                        </p>
+                      </div>
+                    </div>
+                    {/* Segment switcher — only visible when both segments exist */}
+                    {showBothSegments && (
+                      <div className="flex items-center bg-white/20 rounded-lg p-1 gap-1">
+                        <button
+                          onClick={() => setHofSegment('B2B')}
+                          className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-all ${
+                            hofSegment === 'B2B'
+                              ? 'bg-white text-amber-700 shadow'
+                              : 'text-white/80 hover:text-white'
+                          }`}
+                        >
+                          B2B Partners
+                        </button>
+                        <button
+                          onClick={() => setHofSegment('B2C')}
+                          className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-all ${
+                            hofSegment === 'B2C'
+                              ? 'bg-white text-amber-700 shadow'
+                              : 'text-white/80 hover:text-white'
+                          }`}
+                        >
+                          B2C Digital
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Quarter targets strip */}
+                  {quarter && (
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      {hofSegment === 'B2B' && hasB2B && (
+                        <>
+                          <div className="bg-white/20 rounded-lg px-4 py-2 text-sm text-white">
+                            Trail Target: <strong>₹{quarter.b2b_trail_target} Cr</strong>
+                          </div>
+                          <div className="bg-white/20 rounded-lg px-4 py-2 text-sm text-white">
+                            Fees Target: <strong>₹{quarter.b2b_fees_target} Cr</strong>
+                          </div>
+                        </>
+                      )}
+                      {hofSegment === 'B2C' && hasB2C && (
+                        <>
+                          <div className="bg-white/20 rounded-lg px-4 py-2 text-sm text-white">
+                            Net New Sales Target: <strong>₹{quarter.b2c_net_new_sales_target} Cr</strong>
+                          </div>
+                          <div className="bg-white/20 rounded-lg px-4 py-2 text-sm text-white">
+                            Net New SIPs Target: <strong>₹{quarter.b2c_net_new_sips_target} Cr</strong>
+                          </div>
+                        </>
+                      )}
+                      <div className="bg-white/20 rounded-lg px-4 py-2 text-sm text-white">
+                        CEO&apos;s Club: <strong>{clubRows.length} of {activeHofRows.length}</strong> members
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-8">
+                  {hofLoading && (
+                    <div className="flex items-center justify-center py-20">
+                      <Loader2 className="w-10 h-10 text-amber-500 animate-spin" />
+                    </div>
+                  )}
+
+                  {!hofLoading && !hofData && (
+                    <div className="text-center py-16">
+                      <Crown className="w-20 h-20 text-gray-200 mx-auto mb-4" />
+                      <p className="text-xl font-semibold text-gray-600 mb-2">No Active Quarter</p>
+                      <p className="text-gray-500">Ask your admin to configure an active HOF quarter with targets.</p>
+                    </div>
+                  )}
+
+                  {!hofLoading && hofData && activeHofRows.length === 0 && (
+                    <div className="text-center py-16">
+                      <Crown className="w-20 h-20 text-gray-200 mx-auto mb-4" />
+                      <p className="text-xl font-semibold text-gray-600 mb-2">No Data Yet</p>
+                      <p className="text-gray-500">
+                        {hofSegment === 'B2B' ? 'B2B MIS data' : 'B2C MIS data'} hasn&apos;t been synced for this period.
+                      </p>
+                    </div>
+                  )}
+
+                  {!hofLoading && activeHofRows.length > 0 && (
+                    <div className="space-y-6">
+                      {/* CEO's Club Members */}
+                      {clubRows.length > 0 && (
+                        <div>
+                          <div className="flex items-center space-x-2 mb-4">
+                            <Crown className="w-5 h-5 text-amber-500" />
+                            <h3 className="text-lg font-bold text-gray-900">CEO&apos;s Club Members</h3>
+                            <span className="bg-amber-100 text-amber-700 text-xs font-semibold px-2.5 py-1 rounded-full border border-amber-200">
+                              Top 20%
+                            </span>
+                          </div>
+                          <div className="space-y-3">
+                            {clubRows.map((person: any) => (
+                              <HofRankRow
+                                key={person.name}
+                                person={person}
+                                segment={hofSegment}
+                                isClubMember
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Divider */}
+                      {clubRows.length > 0 && nonClubRows.length > 0 && (
+                        <div className="flex items-center space-x-4 py-2">
+                          <div className="flex-1 border-t border-dashed border-gray-300" />
+                          <span className="text-xs text-gray-400 font-medium uppercase tracking-wider">
+                            Full Leaderboard
+                          </span>
+                          <div className="flex-1 border-t border-dashed border-gray-300" />
+                        </div>
+                      )}
+
+                      {/* Remaining */}
+                      {nonClubRows.length > 0 && (
+                        <div className="space-y-3">
+                          {nonClubRows.map((person: any) => (
+                            <HofRankRow
+                              key={person.name}
+                              person={person}
+                              segment={hofSegment}
+                              isClubMember={false}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </main>
 
@@ -1133,6 +1311,104 @@ export default function DashboardPage() {
 
       {/* FundsAgent floating widget — only renders if user has agent access */}
       <AgentWidget />
+    </div>
+  );
+}
+
+// ── HOF Rank Row ──────────────────────────────────────────────────────────────
+
+function HofRankRow({
+  person,
+  segment,
+  isClubMember,
+}: {
+  person: any;
+  segment: 'B2B' | 'B2C';
+  isClubMember: boolean;
+}) {
+  const rank = person.rank;
+  const isMedal = rank <= 3;
+
+  const getRankIcon = (r: number) => {
+    if (r === 1) return <Crown className="w-6 h-6 text-yellow-500" />;
+    if (r === 2) return <Medal className="w-6 h-6 text-gray-400" />;
+    if (r === 3) return <Medal className="w-6 h-6 text-amber-600" />;
+    return <span className="text-lg font-bold text-gray-400">#{r}</span>;
+  };
+
+  return (
+    <div
+      className={`flex items-center justify-between p-5 rounded-xl transition-all duration-200 hover:shadow-md ${
+        isClubMember
+          ? isMedal
+            ? 'bg-gradient-to-r from-amber-50 to-yellow-50 border-2 border-amber-300 shadow-sm'
+            : 'bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200'
+          : 'bg-gray-50 border border-gray-200 hover:border-gray-300'
+      }`}
+    >
+      <div className="flex items-center space-x-4 flex-1 min-w-0">
+        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-white shadow-md shrink-0">
+          {getRankIcon(rank)}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center space-x-2">
+            <h3 className="text-base font-bold text-gray-900 truncate">{person.name}</h3>
+            {isClubMember && (
+              <span className="inline-flex items-center space-x-1 shrink-0 bg-amber-100 text-amber-700 text-xs font-semibold px-2 py-0.5 rounded-full border border-amber-200">
+                <Crown className="w-3 h-3" />
+                <span>CEO&apos;s Club</span>
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-gray-500 truncate">
+            {segment === 'B2B'
+              ? `${person.branch}${person.zone ? ` · ${person.zone}` : ''}`
+              : person.team}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-center space-x-6 text-right shrink-0 ml-4">
+        {segment === 'B2B' ? (
+          <>
+            <div>
+              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Trail (MTD)</p>
+              <p className="text-lg font-bold text-gray-800">₹{person.trail_actual?.toFixed(2)} Cr</p>
+              <p className="text-xs text-amber-600 font-semibold">{person.trail_pct?.toFixed(1)}% of target</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Fees (MTD)</p>
+              <p className="text-base font-semibold text-gray-600">₹{person.fees_actual?.toFixed(2)} Cr</p>
+              <p className="text-xs text-gray-400">{person.fees_pct?.toFixed(1)}% of target</p>
+            </div>
+            <div className="text-center w-20">
+              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Achievement</p>
+              <p className={`text-2xl font-black ${isClubMember ? 'text-amber-600' : 'text-gray-700'}`}>
+                {person.achievement_pct?.toFixed(1)}%
+              </p>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Net Sales (MTD)</p>
+              <p className="text-lg font-bold text-gray-800">₹{person.net_sales_actual?.toFixed(2)} Cr</p>
+              <p className="text-xs text-amber-600 font-semibold">{person.net_sales_pct?.toFixed(1)}% of target</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Net SIPs (MTD)</p>
+              <p className="text-base font-semibold text-gray-600">₹{person.net_sips_actual?.toFixed(2)} Cr</p>
+              <p className="text-xs text-gray-400">{person.net_sips_pct?.toFixed(1)}% of target</p>
+            </div>
+            <div className="text-center w-20">
+              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Achievement</p>
+              <p className={`text-2xl font-black ${isClubMember ? 'text-amber-600' : 'text-gray-700'}`}>
+                {person.achievement_pct?.toFixed(1)}%
+              </p>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

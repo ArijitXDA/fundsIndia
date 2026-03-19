@@ -9,6 +9,7 @@ import {
   Upload, FileSpreadsheet, Eye, RefreshCw, AlertTriangle,
   UserPlus, UserMinus, UserCheck, ChevronDown, ChevronUp,
   Download, History, ChevronLeft, Filter, Bot, Sheet,
+  Crown, Save, Star, Calendar, Settings2, ToggleLeft, ToggleRight,
 } from 'lucide-react';
 import AgentManagement from '@/components/AgentManagement';
 
@@ -242,7 +243,7 @@ export default function AdminPage() {
             <ActivityLogSection adminTier={adminRole.tier} showToast={showToast} />
           )}
           {activeSection === 'contests' && (
-            <ComingSoonSection title="Contest Management" description="Create, edit, and manage Hall of Fame contests." />
+            <HofConfigSection showToast={showToast} />
           )}
           {activeSection === 'agent' && (
             <AgentManagement showToast={showToast} />
@@ -875,6 +876,397 @@ function ResultSummary({ roleId, result }: { roleId: number; result: any }) {
     <p className="mt-1 text-sm text-green-700">
       <strong>{r.inserted}</strong> records inserted from <em>{r.filename}</em>
     </p>
+  );
+}
+
+// ── HOF Config Section ────────────────────────────────────────────────────────
+
+interface HofQuarter {
+  id: string;
+  quarter_label: string;
+  quarter_start: string;
+  quarter_end: string;
+  is_active: boolean;
+  b2b_trail_target: number;
+  b2b_fees_target: number;
+  b2c_net_new_sales_target: number;
+  b2c_net_new_sips_target: number;
+  notes: string | null;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+const BLANK_QUARTER: Partial<HofQuarter> = {
+  quarter_label: '',
+  quarter_start: '',
+  quarter_end: '',
+  is_active: false,
+  b2b_trail_target: 10,
+  b2b_fees_target: 2.5,
+  b2c_net_new_sales_target: 0,
+  b2c_net_new_sips_target: 0,
+  notes: '',
+};
+
+function HofConfigSection({ showToast }: { showToast: Function }) {
+  const [quarters, setQuarters] = useState<HofQuarter[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState<Partial<HofQuarter> | null>(null);
+  const [isNew, setIsNew] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    const res = await fetch('/api/admin/hof-config');
+    if (res.ok) {
+      const data = await res.json();
+      setQuarters(data.quarters ?? []);
+    } else {
+      showToast('error', 'Failed to load quarter configs');
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const handleEdit = (q: HofQuarter) => {
+    setEditing({ ...q });
+    setIsNew(false);
+  };
+
+  const handleNew = () => {
+    setEditing({ ...BLANK_QUARTER });
+    setIsNew(true);
+  };
+
+  const handleCancel = () => setEditing(null);
+
+  const handleSave = async () => {
+    if (!editing) return;
+    if (!editing.quarter_label?.trim() || !editing.quarter_start || !editing.quarter_end) {
+      showToast('error', 'Quarter label, start and end dates are required');
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/hof-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editing),
+      });
+      if (res.ok) {
+        showToast('success', isNew ? 'Quarter created successfully' : 'Quarter updated successfully');
+        setEditing(null);
+        await load();
+      } else {
+        const err = await res.json();
+        showToast('error', err.error ?? 'Failed to save quarter');
+      }
+    } catch {
+      showToast('error', 'Network error saving quarter');
+    }
+    setSaving(false);
+  };
+
+  const handleActivate = async (q: HofQuarter) => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/hof-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...q, is_active: true }),
+      });
+      if (res.ok) {
+        showToast('success', `"${q.quarter_label}" is now the active quarter`);
+        await load();
+      } else {
+        const err = await res.json();
+        showToast('error', err.error ?? 'Failed to activate quarter');
+      }
+    } catch {
+      showToast('error', 'Network error activating quarter');
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">Contest Management</h2>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Configure CEO&apos;s Club quarterly targets for B2B and B2C segments.
+          </p>
+        </div>
+        {!editing && (
+          <button
+            onClick={handleNew}
+            className="flex items-center space-x-2 px-4 py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-sm"
+          >
+            <Plus className="w-4 h-4" />
+            <span>New Quarter</span>
+          </button>
+        )}
+      </div>
+
+      {/* ── Edit / Create Form ── */}
+      {editing && (
+        <div className="bg-white border border-indigo-200 rounded-xl shadow-sm mb-6 overflow-hidden">
+          <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-4 flex items-center space-x-3">
+            <Crown className="w-5 h-5 text-yellow-300" />
+            <h3 className="text-lg font-bold text-white">
+              {isNew ? 'Create New Quarter' : `Edit — ${editing.quarter_label}`}
+            </h3>
+          </div>
+
+          <div className="p-6 space-y-5">
+            {/* Row 1: label + dates */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Quarter Label *</label>
+                <input
+                  type="text"
+                  value={editing.quarter_label ?? ''}
+                  onChange={e => setEditing(prev => ({ ...prev!, quarter_label: e.target.value }))}
+                  placeholder="e.g. Q4 FY26"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Start Date *</label>
+                <input
+                  type="date"
+                  value={editing.quarter_start ?? ''}
+                  onChange={e => setEditing(prev => ({ ...prev!, quarter_start: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">End Date *</label>
+                <input
+                  type="date"
+                  value={editing.quarter_end ?? ''}
+                  onChange={e => setEditing(prev => ({ ...prev!, quarter_end: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
+            </div>
+
+            {/* Row 2: B2B targets */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-2 flex items-center space-x-1.5">
+                <BarChart2 className="w-4 h-4 text-indigo-500" />
+                <span>B2B Targets (₹ Crore)</span>
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Trail Net Sales (COB 50%) Target</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={editing.b2b_trail_target ?? 10}
+                    onChange={e => setEditing(prev => ({ ...prev!, b2b_trail_target: parseFloat(e.target.value) }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Fees (AIF+PMS+LAS+DYNAMO Trail) Target</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={editing.b2b_fees_target ?? 2.5}
+                    onChange={e => setEditing(prev => ({ ...prev!, b2b_fees_target: parseFloat(e.target.value) }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Row 3: B2C targets */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-2 flex items-center space-x-1.5">
+                <TrendingUp className="w-4 h-4 text-blue-500" />
+                <span>B2C Targets (₹ Crore)</span>
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Net New Sales (Net Inflow MTD) Target</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={editing.b2c_net_new_sales_target ?? 0}
+                    onChange={e => setEditing(prev => ({ ...prev!, b2c_net_new_sales_target: parseFloat(e.target.value) }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Net New SIPs (New SIP Inflow MTD) Target</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={editing.b2c_net_new_sips_target ?? 0}
+                    onChange={e => setEditing(prev => ({ ...prev!, b2c_net_new_sips_target: parseFloat(e.target.value) }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Row 4: is_active + notes */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Notes (optional)</label>
+                <input
+                  type="text"
+                  value={editing.notes ?? ''}
+                  onChange={e => setEditing(prev => ({ ...prev!, notes: e.target.value }))}
+                  placeholder="Any notes about this quarter..."
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
+              <div className="flex items-end">
+                <label className="flex items-center space-x-3 cursor-pointer select-none">
+                  <div
+                    onClick={() => setEditing(prev => ({ ...prev!, is_active: !prev?.is_active }))}
+                    className={`relative inline-flex items-center w-11 h-6 rounded-full transition-colors ${
+                      editing.is_active ? 'bg-green-500' : 'bg-gray-300'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block w-4 h-4 bg-white rounded-full shadow transform transition-transform ${
+                        editing.is_active ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">Set as Active Quarter</p>
+                    <p className="text-xs text-gray-400">All other quarters will be deactivated</p>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex items-center space-x-3 pt-2 border-t border-gray-100">
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center space-x-2 px-5 py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-lg transition-colors"
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                <span>{saving ? 'Saving…' : 'Save Quarter'}</span>
+              </button>
+              <button
+                onClick={handleCancel}
+                className="px-5 py-2.5 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Quarter list ── */}
+      {loading ? (
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
+        </div>
+      ) : quarters.length === 0 ? (
+        <div className="bg-white border border-dashed border-gray-300 rounded-xl p-12 text-center">
+          <Crown className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+          <p className="text-gray-500 font-medium">No quarters configured yet</p>
+          <p className="text-gray-400 text-sm mt-1">Click &quot;New Quarter&quot; to create the first one.</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {quarters.map(q => (
+            <div
+              key={q.id}
+              className={`bg-white border rounded-xl shadow-sm overflow-hidden ${
+                q.is_active ? 'border-green-300' : 'border-gray-200'
+              }`}
+            >
+              {q.is_active && (
+                <div className="bg-green-500 px-4 py-1 flex items-center space-x-1.5">
+                  <CheckCircle className="w-3.5 h-3.5 text-white" />
+                  <span className="text-xs font-semibold text-white">Active Quarter</span>
+                </div>
+              )}
+              <div className="p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start space-x-3 min-w-0">
+                    <div className={`p-2 rounded-lg shrink-0 ${q.is_active ? 'bg-green-100' : 'bg-gray-100'}`}>
+                      <Crown className={`w-5 h-5 ${q.is_active ? 'text-green-600' : 'text-gray-500'}`} />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="font-bold text-gray-900 text-lg">{q.quarter_label}</h3>
+                      <p className="text-sm text-gray-500 flex items-center space-x-1 mt-0.5">
+                        <Calendar className="w-3.5 h-3.5" />
+                        <span>{q.quarter_start} → {q.quarter_end}</span>
+                      </p>
+                      {q.notes && (
+                        <p className="text-xs text-gray-400 mt-1 italic">{q.notes}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2 shrink-0">
+                    {!q.is_active && (
+                      <button
+                        onClick={() => handleActivate(q)}
+                        disabled={saving}
+                        className="flex items-center space-x-1.5 px-3 py-2 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        <span>Set Active</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleEdit(q)}
+                      className="flex items-center space-x-1.5 px-3 py-2 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                    >
+                      <Settings2 className="w-3.5 h-3.5" />
+                      <span>Edit</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Targets grid */}
+                <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="bg-indigo-50 rounded-lg p-3 border border-indigo-100">
+                    <p className="text-xs text-indigo-600 font-medium mb-1">B2B Trail Target</p>
+                    <p className="text-lg font-bold text-indigo-900">₹{q.b2b_trail_target} Cr</p>
+                  </div>
+                  <div className="bg-purple-50 rounded-lg p-3 border border-purple-100">
+                    <p className="text-xs text-purple-600 font-medium mb-1">B2B Fees Target</p>
+                    <p className="text-lg font-bold text-purple-900">₹{q.b2b_fees_target} Cr</p>
+                  </div>
+                  <div className="bg-blue-50 rounded-lg p-3 border border-blue-100">
+                    <p className="text-xs text-blue-600 font-medium mb-1">B2C Net Sales Target</p>
+                    <p className="text-lg font-bold text-blue-900">₹{q.b2c_net_new_sales_target} Cr</p>
+                  </div>
+                  <div className="bg-cyan-50 rounded-lg p-3 border border-cyan-100">
+                    <p className="text-xs text-cyan-600 font-medium mb-1">B2C Net SIPs Target</p>
+                    <p className="text-lg font-bold text-cyan-900">₹{q.b2c_net_new_sips_target} Cr</p>
+                  </div>
+                </div>
+
+                {q.updated_by && (
+                  <p className="text-xs text-gray-400 mt-3">
+                    Last updated by {q.updated_by} on {new Date(q.updated_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                  </p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
