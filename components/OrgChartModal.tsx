@@ -71,7 +71,12 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber, 
             const downstreamEmployees = getDownstreamEmployees(allEmployees, current.employeeNumber);
             setEmployees(downstreamEmployees);
             setCurrentEmployee(current);
-            setVisibleEmployees(new Set([current.employeeNumber]));
+            // Auto-expand first level so direct reports are immediately visible
+            const initialVisible = new Set([current.employeeNumber]);
+            downstreamEmployees
+              .filter((e: Employee) => e.reportingManagerEmpNo === current.employeeNumber)
+              .forEach((e: Employee) => initialVisible.add(e.employeeNumber));
+            setVisibleEmployees(initialVisible);
           } else {
             setEmployees([]);
             setCurrentEmployee(null);
