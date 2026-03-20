@@ -1274,8 +1274,13 @@ export default function DashboardPage() {
             const nonClubRows = activeHofRows.filter((r: any) => !r.is_ceos_club);
 
             // Countdown: days remaining until quarter_end
-            const daysLeft = quarter
-              ? Math.ceil((new Date(quarter.quarter_end + 'T23:59:59').getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+            const endMs = quarter ? new Date(
+              /^\d{4}-\d{2}-\d{2}$/.test(quarter.quarter_end)
+                ? quarter.quarter_end + 'T23:59:59+05:30'
+                : quarter.quarter_end
+            ).getTime() : null;
+            const daysLeft = endMs !== null && !isNaN(endMs)
+              ? Math.ceil((endMs - Date.now()) / (1000 * 60 * 60 * 24))
               : null;
             const quarterEnded = daysLeft !== null && daysLeft <= 0;
 
@@ -1403,7 +1408,7 @@ export default function DashboardPage() {
                         ) : (
                           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                             {clubRows.map((person: any) => (
-                              <WinnerCard key={person.name} person={person} segment={hofSegment} />
+                              <WinnerCard key={`${hofSegment}-${person.rank}`} person={person} segment={hofSegment} />
                             ))}
                           </div>
                         )}
@@ -1612,7 +1617,7 @@ function WinnerCard({
   person: any;
   segment: 'B2B' | 'B2C';
 }) {
-  const rank = person.rank;
+  const rank = person.rank ?? 0;
 
   const getRankBadge = (r: number) => {
     if (r === 1) return (
