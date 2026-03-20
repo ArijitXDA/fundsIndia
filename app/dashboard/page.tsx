@@ -1156,7 +1156,7 @@ export default function DashboardPage() {
                       {hofSegment === 'B2B' && hasB2B && (
                         <>
                           <div className="bg-white/20 rounded-lg px-4 py-2 text-sm text-white">
-                            Trail Target: <strong>₹{quarter.b2b_trail_target} Cr</strong>
+                            MTD Sales Target: <strong>₹{quarter.b2b_trail_target} Cr</strong>
                           </div>
                           <div className="bg-white/20 rounded-lg px-4 py-2 text-sm text-white">
                             Fees Target: <strong>₹{quarter.b2b_fees_target} Cr</strong>
@@ -1372,7 +1372,7 @@ function HofRankRow({
         {segment === 'B2B' ? (
           <>
             <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Trail (MTD)</p>
+              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">MTD Sales</p>
               <p className="text-lg font-bold text-gray-800">₹{person.trail_actual?.toFixed(2)} Cr</p>
               <p className="text-xs text-amber-600 font-semibold">{person.trail_pct?.toFixed(1)}% of target</p>
             </div>

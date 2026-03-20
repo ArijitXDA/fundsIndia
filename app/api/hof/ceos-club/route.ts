@@ -84,11 +84,12 @@ export async function GET(request: NextRequest) {
 
   // ── B2B rankings ──────────────────────────────────────────────────────────
   if (userSegment === 'b2b' || userSegment === 'all') {
+    // Use select('*') to avoid PostgREST URL-encoding issues with '+' and special
+    // characters in column names like "AIF+PMS+LAS+DYNAMO (TRAIL)".
+    // Accessing the column by key in JS works fine regardless.
     const { data: rows } = await supabaseAdmin
       .from('b2b_sales_current_month')
-      .select(
-        '"RM", "BM", "Branch", "Zone", "Total Net Sales (COB 50%)", "AIF+PMS+LAS+DYNAMO (TRAIL)"'
-      );
+      .select('*');
 
     if (rows && rows.length > 0) {
       const rmMap = new Map<
@@ -110,7 +111,8 @@ export async function GET(request: NextRequest) {
           trail: 0,
           fees:  0,
         };
-        existing.trail += parseNum((row as any)['Total Net Sales (COB 50%)']);
+        // Use COB 100% to match the B2B tab's MTD Sales figure exactly
+        existing.trail += parseNum((row as any)['Total Net Sales (COB 100%)']);
         existing.fees  += parseNum((row as any)['AIF+PMS+LAS+DYNAMO (TRAIL)']);
         rmMap.set(rm, existing);
       }
@@ -155,9 +157,11 @@ export async function GET(request: NextRequest) {
 
   // ── B2C rankings ──────────────────────────────────────────────────────────
   if (userSegment === 'b2c' || userSegment === 'all') {
+    // Use select('*') to avoid PostgREST URL-encoding issues with special characters
+    // like '[' and ']' in column names "net_inflow_mtd[cr]" and "new_sip_inflow_mtd[cr.]".
     const { data: rows } = await supabaseAdmin
       .from('b2c')
-      .select('"team", "advisor", "net_inflow_mtd[cr]", "new_sip_inflow_mtd[cr.]"');
+      .select('*');
 
     if (rows && rows.length > 0) {
       const netSalesTarget = Number(quarter.b2c_net_new_sales_target);
