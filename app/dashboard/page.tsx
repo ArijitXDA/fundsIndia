@@ -1262,6 +1262,194 @@ export default function DashboardPage() {
               </div>
             );
           })()}
+
+          {/* ── Hall of Fame Contest Tab ── */}
+          {activeTab === 'HOF_CONTEST' && (() => {
+            const hasB2B = hofData?.b2b !== null && hofData?.b2b !== undefined;
+            const hasB2C = hofData?.b2c !== null && hofData?.b2c !== undefined;
+            const showBothSegments = hasB2B && hasB2C;
+            const activeHofRows: any[] = hofSegment === 'B2B' ? (hofData?.b2b ?? []) : (hofData?.b2c ?? []);
+            const quarter = hofData?.quarter;
+            const clubRows = activeHofRows.filter((r: any) => r.is_ceos_club);
+            const nonClubRows = activeHofRows.filter((r: any) => !r.is_ceos_club);
+
+            // Countdown: days remaining until quarter_end
+            const daysLeft = quarter
+              ? Math.ceil((new Date(quarter.quarter_end).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+              : null;
+            const quarterEnded = daysLeft !== null && daysLeft <= 0;
+
+            return (
+              <div>
+                {/* Contest Banner */}
+                <div className="bg-gradient-to-r from-slate-800 via-slate-900 to-slate-800 px-8 py-7 relative overflow-hidden">
+                  {/* Gold shimmer overlay */}
+                  <div className="absolute inset-0 bg-gradient-to-r from-amber-500/5 via-yellow-400/10 to-amber-500/5 pointer-events-none" />
+                  <div className="relative z-10 flex items-start justify-between flex-wrap gap-4">
+                    <div className="flex items-center space-x-4">
+                      <div className="bg-amber-400/20 rounded-2xl p-3 border border-amber-400/30">
+                        <Trophy className="w-8 h-8 text-amber-400" />
+                      </div>
+                      <div>
+                        <h2 className="text-2xl font-bold text-white">Hall of Fame</h2>
+                        <p className="text-slate-400 text-sm mt-0.5">CEO&apos;s Club · Top 20% by achievement</p>
+                      </div>
+                    </div>
+                    {/* Quarter + Countdown */}
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {quarter && (
+                        <div className="bg-white/10 rounded-xl px-4 py-2.5 text-center border border-white/10">
+                          <p className="text-xs text-slate-400 uppercase tracking-wider">Quarter</p>
+                          <p className="text-lg font-bold text-white">{quarter.quarter_label}</p>
+                          <p className="text-xs text-slate-400">
+                            {new Date(quarter.quarter_start).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                            {' – '}
+                            {new Date(quarter.quarter_end).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                          </p>
+                        </div>
+                      )}
+                      {daysLeft !== null && (
+                        <div className={`rounded-xl px-4 py-2.5 text-center border ${
+                          quarterEnded
+                            ? 'bg-gray-600/40 border-gray-500/30'
+                            : daysLeft <= 7
+                            ? 'bg-red-500/20 border-red-400/30'
+                            : 'bg-amber-400/20 border-amber-400/30'
+                        }`}>
+                          <p className="text-xs text-slate-400 uppercase tracking-wider">Status</p>
+                          {quarterEnded ? (
+                            <p className="text-base font-bold text-gray-300">Quarter Closed</p>
+                          ) : (
+                            <>
+                              <p className={`text-2xl font-black ${daysLeft <= 7 ? 'text-red-400' : 'text-amber-400'}`}>
+                                {daysLeft}
+                              </p>
+                              <p className="text-xs text-slate-400">days left</p>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Segment switcher */}
+                  {showBothSegments && (
+                    <div className="relative z-10 mt-5 flex items-center gap-2">
+                      <button
+                        onClick={() => setHofSegment('B2B')}
+                        className={`px-5 py-2 text-sm font-semibold rounded-lg transition-all ${
+                          hofSegment === 'B2B'
+                            ? 'bg-amber-400 text-slate-900 shadow-lg shadow-amber-400/30'
+                            : 'bg-white/10 text-slate-300 hover:bg-white/20 border border-white/10'
+                        }`}
+                      >
+                        B2B Partners
+                      </button>
+                      <button
+                        onClick={() => setHofSegment('B2C')}
+                        className={`px-5 py-2 text-sm font-semibold rounded-lg transition-all ${
+                          hofSegment === 'B2C'
+                            ? 'bg-amber-400 text-slate-900 shadow-lg shadow-amber-400/30'
+                            : 'bg-white/10 text-slate-300 hover:bg-white/20 border border-white/10'
+                        }`}
+                      >
+                        B2C Digital
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-8">
+                  {/* Loading */}
+                  {hofLoading && (
+                    <div className="flex items-center justify-center py-20">
+                      <Loader2 className="w-10 h-10 text-amber-500 animate-spin" />
+                    </div>
+                  )}
+
+                  {/* No active quarter */}
+                  {!hofLoading && !hofData && (
+                    <div className="text-center py-16">
+                      <Trophy className="w-20 h-20 text-gray-200 mx-auto mb-4" />
+                      <p className="text-xl font-semibold text-gray-600 mb-2">No Active Contest</p>
+                      <p className="text-gray-500">Ask your admin to configure an active HOF quarter.</p>
+                    </div>
+                  )}
+
+                  {/* No data for this segment */}
+                  {!hofLoading && hofData && activeHofRows.length === 0 && (
+                    <div className="text-center py-16">
+                      <Trophy className="w-20 h-20 text-gray-200 mx-auto mb-4" />
+                      <p className="text-xl font-semibold text-gray-600 mb-2">No Data Yet</p>
+                      <p className="text-gray-500">
+                        {hofSegment === 'B2B' ? 'B2B' : 'B2C'} MIS data hasn&apos;t been synced for this period.
+                      </p>
+                    </div>
+                  )}
+
+                  {!hofLoading && activeHofRows.length > 0 && (
+                    <div className="space-y-10">
+                      {/* CEO's Club Winners Grid */}
+                      <div>
+                        <div className="flex items-center space-x-2 mb-6">
+                          <Crown className="w-5 h-5 text-amber-500" />
+                          <h3 className="text-lg font-bold text-gray-900">CEO&apos;s Club Members</h3>
+                          <span className="bg-amber-100 text-amber-700 text-xs font-semibold px-2.5 py-1 rounded-full border border-amber-200">
+                            {clubRows.length} member{clubRows.length !== 1 ? 's' : ''} · Top 20%
+                          </span>
+                        </div>
+                        {clubRows.length === 0 ? (
+                          <p className="text-gray-400 text-sm">No members yet for this period.</p>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {clubRows.map((person: any) => (
+                              <WinnerCard key={person.name} person={person} segment={hofSegment} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* All Participants (collapsible) */}
+                      {nonClubRows.length > 0 && (
+                        <div>
+                          <button
+                            onClick={() => setShowAllParticipants(p => !p)}
+                            className="flex items-center space-x-2 text-sm font-semibold text-gray-500 hover:text-gray-700 transition-colors mb-4"
+                          >
+                            <Users className="w-4 h-4" />
+                            <span>{showAllParticipants ? 'Hide' : 'Show all'} {nonClubRows.length} participants</span>
+                            <span>{showAllParticipants ? '▲' : '▾'}</span>
+                          </button>
+                          {showAllParticipants && (
+                            <div className="space-y-2">
+                              {nonClubRows.map((person: any) => (
+                                <HofRankRow
+                                  key={person.name}
+                                  person={person}
+                                  segment={hofSegment}
+                                  isClubMember={false}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Past Quarters Placeholder */}
+                      <div className="border border-dashed border-gray-200 rounded-2xl p-8 text-center bg-gray-50/50">
+                        <Clock className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                        <h4 className="text-base font-semibold text-gray-400 mb-1">Past Hall of Fame</h4>
+                        <p className="text-sm text-gray-400">Historical CEO&apos;s Club winners will appear here</p>
+                        <span className="inline-block mt-3 text-xs font-semibold text-gray-400 bg-gray-100 border border-gray-200 rounded-full px-3 py-1">
+                          Coming Soon
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </main>
 
