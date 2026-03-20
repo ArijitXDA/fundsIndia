@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { TrendingUp, Award, BarChart3, Trophy, Medal, Crown, Building2, Users, Network, KeyRound, CheckCircle, Shield, LogOut, UserCheck, Globe, ChevronLeft, ChevronRight, Star, Loader2 } from 'lucide-react';
+import { TrendingUp, Award, BarChart3, Trophy, Medal, Crown, Building2, Users, Network, KeyRound, CheckCircle, Shield, LogOut, UserCheck, Globe, ChevronLeft, ChevronRight, Star, Loader2, Clock } from 'lucide-react';
 import OrgChartModal from '@/components/OrgChartModal';
 import AgentWidget from '@/components/AgentWidget';
 
@@ -28,7 +28,7 @@ interface B2CAdvisor {
   newSIPInflowYTD: string;
 }
 
-type TabType = 'B2B' | 'B2C' | 'PW' | 'HOF';
+type TabType = 'B2B' | 'B2C' | 'PW' | 'HOF' | 'HOF_CONTEST';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -49,6 +49,7 @@ export default function DashboardPage() {
   const [hofData, setHofData] = useState<any>(null);
   const [hofLoading, setHofLoading] = useState(false);
   const [hofSegment, setHofSegment] = useState<'B2B' | 'B2C'>('B2B');
+  const [showAllParticipants, setShowAllParticipants] = useState(false);
   const PAGE_SIZE = 10;
 
   useEffect(() => {
@@ -179,6 +180,7 @@ export default function DashboardPage() {
   ];
 
   const hofTab = { id: 'HOF' as TabType, name: "CEO's Club", icon: Star, description: 'Hall of Fame', businessUnit: '' };
+  const hofContestTab = { id: 'HOF_CONTEST' as TabType, name: 'Hall of Fame', icon: Trophy, description: 'HOF Contest', businessUnit: '' };
 
   const userBusinessUnit = user?.employee?.business_unit;
 
@@ -188,7 +190,7 @@ export default function DashboardPage() {
     ? segmentTabs.filter(tab => tab.businessUnit === userBusinessUnit)
     : segmentTabs;
 
-  const tabs = [...visibleSegmentTabs, hofTab];
+  const tabs = [...visibleSegmentTabs, hofTab, hofContestTab];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
