@@ -362,7 +362,7 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber, 
 
     // Multiple roots (vertical filter with multiple top-level managers)
     return (
-      <div className="flex items-start gap-10 flex-wrap justify-center">
+      <div className="flex items-start gap-10 flex-wrap justify-start">
         {roots.map(root => (
           <div key={root.employeeNumber}>
             {renderNode(root)}
