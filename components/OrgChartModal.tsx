@@ -53,8 +53,13 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber, 
       const response = await fetch(url);
       const data = await response.json();
 
+      if (!data.success) {
+        console.error('[OrgChart] API returned failure:', data.error);
+      }
+
       if (data.success) {
-        const allEmployees = data.employees;
+        const allEmployees: Employee[] = data.employees ?? [];
+        console.log(`[OrgChart] Loaded ${allEmployees.length} employees, currentEmployee:`, data.currentEmployee?.employeeNumber);
 
         if (verticalFilter) {
           const empNumbers = new Set(allEmployees.map((e: Employee) => e.employeeNumber));
@@ -76,6 +81,7 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber, 
             downstreamEmployees
               .filter((e: Employee) => e.reportingManagerEmpNo === current.employeeNumber)
               .forEach((e: Employee) => initialVisible.add(e.employeeNumber));
+            console.log(`[OrgChart] ${current.name} downstream: ${downstreamEmployees.length}, initial visible: ${initialVisible.size}`, [...initialVisible]);
             setVisibleEmployees(initialVisible);
           } else {
             setEmployees([]);
