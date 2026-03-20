@@ -467,7 +467,7 @@ export default function OrgChartModal({ isOpen, onClose, currentEmployeeNumber, 
               </div>
             ) : (
               // The zoom wrapper — scales the whole tree from its top-centre
-              <div className="min-w-full min-h-full flex items-start justify-center p-10">
+              <div className="min-w-max min-h-full flex items-start justify-start p-10 mx-auto">
                 <div
                   style={{
                     transform: `scale(${zoom})`,
