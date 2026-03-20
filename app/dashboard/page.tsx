@@ -1275,7 +1275,7 @@ export default function DashboardPage() {
 
             // Countdown: days remaining until quarter_end
             const daysLeft = quarter
-              ? Math.ceil((new Date(quarter.quarter_end).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+              ? Math.ceil((new Date(quarter.quarter_end + 'T23:59:59').getTime() - Date.now()) / (1000 * 60 * 60 * 24))
               : null;
             const quarterEnded = daysLeft !== null && daysLeft <= 0;
 
@@ -1597,6 +1597,106 @@ function HofRankRow({
               </p>
             </div>
           </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Winner Card (Hall of Fame Contest Tab) ────────────────────────────────────
+
+function WinnerCard({
+  person,
+  segment,
+}: {
+  person: any;
+  segment: 'B2B' | 'B2C';
+}) {
+  const rank = person.rank;
+
+  const getRankBadge = (r: number) => {
+    if (r === 1) return (
+      <div className="flex items-center justify-center w-9 h-9 rounded-full bg-yellow-400 shadow-md shadow-yellow-400/40">
+        <Crown className="w-5 h-5 text-white" />
+      </div>
+    );
+    if (r === 2) return (
+      <div className="flex items-center justify-center w-9 h-9 rounded-full bg-gray-300 shadow-md">
+        <Medal className="w-5 h-5 text-white" />
+      </div>
+    );
+    if (r === 3) return (
+      <div className="flex items-center justify-center w-9 h-9 rounded-full bg-amber-600 shadow-md shadow-amber-600/40">
+        <Medal className="w-5 h-5 text-white" />
+      </div>
+    );
+    return (
+      <div className="flex items-center justify-center w-9 h-9 rounded-full bg-amber-100 border-2 border-amber-300">
+        <span className="text-sm font-black text-amber-700">#{r}</span>
+      </div>
+    );
+  };
+
+  return (
+    <div className="relative bg-gradient-to-b from-amber-50 to-orange-50 border-2 border-amber-300 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden">
+      {/* Top accent bar */}
+      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-300 rounded-t-2xl" />
+
+      {/* Top row: rank badge + CEO's Club ribbon */}
+      <div className="flex items-start justify-between mb-4">
+        {getRankBadge(rank)}
+        <span className="inline-flex items-center space-x-1 bg-amber-100 text-amber-700 text-xs font-bold px-2.5 py-1 rounded-full border border-amber-300">
+          <Crown className="w-3 h-3" />
+          <span>CEO&apos;s Club</span>
+        </span>
+      </div>
+
+      {/* Name + Location */}
+      <h3 className="text-base font-bold text-gray-900 leading-tight mb-0.5">{person.name}</h3>
+      <p className="text-xs text-gray-500 mb-4">
+        {segment === 'B2B'
+          ? `${person.branch}${person.zone ? ` · ${person.zone}` : ''}`
+          : person.team}
+      </p>
+
+      {/* Achievement % — hero number */}
+      <div className="text-center mb-4">
+        <p className="text-4xl font-black text-amber-600 leading-none">
+          {person.achievement_pct?.toFixed(1)}%
+        </p>
+        <p className="text-xs text-gray-400 mt-1 uppercase tracking-wider">of target achieved</p>
+      </div>
+
+      {/* Metric numbers */}
+      <div className="bg-white/60 rounded-xl p-3 border border-amber-200/60">
+        {segment === 'B2B' ? (
+          <div className="flex justify-between text-sm">
+            <div>
+              <p className="text-xs text-gray-400 uppercase tracking-wide">Trail MTD</p>
+              <p className="font-bold text-gray-800">₹{person.trail_actual?.toFixed(2)} Cr</p>
+              <p className="text-xs text-amber-600">{person.trail_pct?.toFixed(1)}%</p>
+            </div>
+            <div className="w-px bg-amber-200" />
+            <div className="text-right">
+              <p className="text-xs text-gray-400 uppercase tracking-wide">Fees MTD</p>
+              <p className="font-bold text-gray-800">₹{person.fees_actual?.toFixed(2)} Cr</p>
+              <p className="text-xs text-gray-400">{person.fees_pct?.toFixed(1)}%</p>
+            </div>
+          </div>
+        ) : (
+          <div className="flex justify-between text-sm">
+            <div>
+              <p className="text-xs text-gray-400 uppercase tracking-wide">Net Sales</p>
+              <p className="font-bold text-gray-800">₹{person.net_sales_actual?.toFixed(2)} Cr</p>
+              <p className="text-xs text-amber-600">{person.net_sales_pct?.toFixed(1)}%</p>
+            </div>
+            <div className="w-px bg-amber-200" />
+            <div className="text-right">
+              <p className="text-xs text-gray-400 uppercase tracking-wide">Net SIPs</p>
+              <p className="font-bold text-gray-800">₹{person.net_sips_actual?.toFixed(2)} Cr</p>
+              <p className="text-xs text-gray-400">{person.net_sips_pct?.toFixed(1)}%</p>
+            </div>
+          </div>
         )}
       </div>
     </div>
